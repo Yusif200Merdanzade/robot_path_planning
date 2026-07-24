@@ -1,0 +1,15 @@
+=== SSENAR? 1: Mane?siz da??ma ===
+H?d?f? yol: 18 add?m
+Qutu h?d?f? çatd?r?ld?!
+
+=== SSENAR? 2: Mane?li da??ma ===
+[DEBUG] evaluateStaticObstacleFuzzy -> level=HIGH action=STOP
+[DEBUG] waitTicksRemaining set to 3
+[DEBUG] waiting, remaining=2 robotIndex=0
+[DEBUG] waiting, remaining=1 robotIndex=0
+[DEBUG] waiting, remaining=0 robotIndex=0
+[DEBUG] evaluateStaticObstacleFuzzy -> level=HIGH action=STOP
+[DEBUG] waitTicksRemaining set to 3
+[DEBUG] waiting, remaining=2 robotIndex=0
+[DEBUG] waiting, remaining=1 robotIndex=0
+[DEBUG] waiting, remaining=0 robotIndex=0

@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="az">
+<head>
+    <meta charset="UTF-8">
+    <title>Anbar Robotu — A* Simulyasiya</title>
+    <style>
+        body {
+            margin: 0;
+            background: #e6ddd0;
+            font-family: 'Segoe UI', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+        h1 {
+            color: #3a3226;
+            font-size: 20px;
+            margin-bottom: 10px;
+        }
+        canvas {
+            border: 3px solid #5a5040;
+            border-radius: 4px;
+            background: #d2c8b4;
+        }
+        #status {
+            margin-top: 10px;
+            font-size: 15px;
+            color: #2c2416;
+            min-height: 24px;
+        }
+        #fuzzy {
+            font-size: 14px;
+            font-weight: bold;
+            min-height: 20px;
+        }
+        button {
+            margin-top: 12px;
+            padding: 10px 30px;
+            font-size: 15px;
+            background: #2980b9;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover { background: #1f6da0; }
+        #connection {
+            margin-top: 8px;
+            font-size: 12px;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+    <h1>Anbar Robotu — A* Yol Tapma Simulyasiyası</h1>
+    <canvas id="grid" width="720" height="640"></canvas>
+    <div id="status">Başlatmaq üçün düyməyə basın</div>
+    <div id="fuzzy"></div>
+    <button onclick="startSimulation()">Başlat</button>
+    <div id="connection">Bağlantı gözlənilir...</div>
+
+<script>
+const canvas = document.getElementById('grid');
+const ctx = canvas.getContext('2d');
+const statusEl = document.getElementById('status');
+const fuzzyEl = document.getElementById('fuzzy');
+const connEl = document.getElementById('connection');
+
+let ws;
+let state = null;
+const CELL = 55;
+const MARGIN = 30;
+
+function connectWS() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const basePath = location.pathname.replace(/\/+$/, '');
+    ws = new WebSocket(proto + '//' + location.host + basePath + '/ws/robot');
+
+    ws.onopen = () => {
+        connEl.textContent = 'WebSocket bağlı';
+        connEl.style.color = '#27ae60';
+    };
+
+    ws.onmessage = (e) => {
+        state = JSON.parse(e.data);
+        draw();
+        statusEl.textContent = state.status;
+        if (state.fuzzyInfo) {
+            fuzzyEl.textContent = state.fuzzyInfo;
+            fuzzyEl.style.color = state.fuzzyAlert ? '#c81e1e' : '#146e3c';
+        } else {
+            fuzzyEl.textContent = '';
+        }
+    };
+
+    ws.onclose = () => {
+        connEl.textContent = 'Bağlantı kəsildi. Yenidən qoşulur...';
+        connEl.style.color = '#e74c3c';
+        setTimeout(connectWS, 2000);
+    };
+}
+
+function startSimulation() {
+    const basePath = location.pathname.replace(/\/+$/, '');
+    fetch(basePath + '/api/start').then(r => r.json()).then(() => {
+        statusEl.textContent = 'Simulyasiya başladı...';
+    });
+}
+
+function draw() {
+    if (!state) return;
+    const rows = state.rows, cols = state.cols;
+    canvas.width = cols * CELL + 2 * MARGIN;
+    canvas.height = rows * CELL + 2 * MARGIN;
+
+    ctx.fillStyle = '#d2c8b4';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Lidar discovered set
+    const discoveredSet = new Set();
+    if (state.hasLidar && state.discovered) {
+        for (const d of state.discovered) discoveredSet.add(d.row + ',' + d.col);
+    }
+
+    // Döşəmə
+    for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+            const x = MARGIN + c * CELL, y = MARGIN + r * CELL;
+            if (state.hasLidar && !discoveredSet.has(r + ',' + c)) {
+                ctx.fillStyle = '#37322d';
+                ctx.fillRect(x, y, CELL, CELL);
+                ctx.strokeStyle = '#4b463f';
+                ctx.strokeRect(x, y, CELL, CELL);
+                ctx.fillStyle = '#645f55';
+                ctx.font = 'bold 14px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('?', x + CELL/2, y + CELL/2);
+            } else {
+                ctx.fillStyle = (r + c) % 2 === 0 ? '#d2c8b4' : '#c8beaa';
+                ctx.fillRect(x, y, CELL, CELL);
+                ctx.strokeStyle = '#b9af9b';
+                ctx.strokeRect(x, y, CELL, CELL);
+            }
+        }
+    }
+
+    // Çərçivə
+    ctx.strokeStyle = '#5a5040';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(MARGIN, MARGIN, cols * CELL, rows * CELL);
+    ctx.lineWidth = 1;
+
+    // Obyektlər
+    for (const obj of state.objects) {
+        const x = MARGIN + obj.col * CELL, y = MARGIN + obj.row * CELL;
+        const cx = x + CELL / 2, cy = y + CELL / 2;
+
+        if (obj.type === 'SHELF') {
+            ctx.fillStyle = '#505a6e';
+            ctx.fillRect(x + 3, y + 3, CELL - 6, CELL - 6);
+            ctx.strokeStyle = '#64708a';
+            const h = CELL / 3;
+            ctx.beginPath();
+            ctx.moveTo(x + 5, y + h); ctx.lineTo(x + CELL - 5, y + h);
+            ctx.moveTo(x + 5, y + 2*h); ctx.lineTo(x + CELL - 5, y + 2*h);
+            ctx.stroke();
+            ctx.fillStyle = '#a58c5f';
+            ctx.fillRect(x + 6, y + 5, 9, 7);
+            ctx.fillRect(x + 17, y + 5, 9, 7);
+            drawLabel(cx, cy + h, 'RƏF', 7);
+        } else if (obj.type === 'FORKLIFT') {
+            ctx.fillStyle = '#c0392b';
+            roundRect(x + 4, y + 4, CELL - 8, CELL - 8, 5);
+            drawLabel(cx, cy, 'M', 9);
+        } else if (obj.type === 'HUMAN') {
+            ctx.fillStyle = 'rgba(241,196,15,0.3)';
+            ctx.beginPath();
+            ctx.arc(cx, cy, CELL/2 - 2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#f39c12';
+            ctx.beginPath();
+            ctx.arc(cx, cy, CELL/2 - 7, 0, Math.PI * 2);
+            ctx.fill();
+            drawLabel(cx, cy, 'H.M', 8);
+        } else if (obj.type === 'PACKAGE') {
+            for (let i = obj.count - 1; i >= 0; i--) {
+                const bx = x + 10 + i * 2, by = y + 12 - i * 6;
+                ctx.fillStyle = '#a0783c';
+                roundRect(bx, by, CELL - 22, 11, 3);
+                ctx.strokeStyle = '#825f28';
+                ctx.strokeRect(bx, by, CELL - 22, 11);
+            }
+            if (obj.count > 1) drawLabel(cx, cy + 6, 'x' + obj.count, 8);
+        }
+    }
+
+    // İz
+    if (state.trail.length > 1) {
+        ctx.strokeStyle = 'rgba(46,204,113,0.5)';
+        ctx.lineWidth = 3;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        for (let i = 0; i < state.trail.length; i++) {
+            const t = state.trail[i];
+            const tx = MARGIN + t.col * CELL + CELL/2;
+            const ty = MARGIN + t.row * CELL + CELL/2;
+            if (i === 0) ctx.moveTo(tx, ty);
+            else ctx.lineTo(tx, ty);
+        }
+        ctx.stroke();
+        ctx.lineWidth = 1;
+
+        for (const t of state.trail) {
+            ctx.fillStyle = 'rgba(39,174,96,0.6)';
+            ctx.beginPath();
+            ctx.arc(MARGIN + t.col * CELL + CELL/2, MARGIN + t.row * CELL + CELL/2, 3, 0, Math.PI*2);
+            ctx.fill();
+        }
+    }
+
+    // Hədəf
+    const gx = MARGIN + state.goal.col * CELL + CELL/2;
+    const gy = MARGIN + state.goal.row * CELL + CELL/2;
+    const s = CELL / 3;
+    ctx.fillStyle = '#27ae60';
+    roundRect(gx - s, gy - s, 2*s, 2*s, 4);
+    drawLabel(gx, gy, 'HƏDƏF', 10);
+
+    // Robot
+    const rx = MARGIN + state.robot.col * CELL + CELL/2;
+    const ry = MARGIN + state.robot.row * CELL + CELL/2;
+    drawRobot(rx, ry, state.carrying, state.boxCount);
+}
+
+function drawRobot(cx, cy, carrying, boxCount) {
+    // Kölgə
+    ctx.fillStyle = 'rgba(0,0,0,0.12)';
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + 18, 12, 3, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Təkərlər
+    ctx.fillStyle = '#32373c';
+    ctx.beginPath(); ctx.arc(cx - 9, cy + 8, 4, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx - 9, cy + 18, 4, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx + 9, cy + 8, 4, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx + 9, cy + 18, 4, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#50555a';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(cx - 9, cy + 8, 4, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx - 9, cy + 18, 4, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx + 9, cy + 8, 4, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx + 9, cy + 18, 4, 0, Math.PI*2); ctx.stroke();
+
+    // Gövdə — metal
+    ctx.fillStyle = '#5a6473';
+    roundRect(cx - 10, cy - 4, 20, 14, 4);
+    ctx.fillStyle = '#6e7887';
+    roundRect(cx - 8, cy - 4, 16, 5, 3);
+    // LED işıqları
+    ctx.fillStyle = '#2ecc71';
+    ctx.beginPath(); ctx.arc(cx - 6, cy + 7, 2, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#e74c3c';
+    ctx.beginPath(); ctx.arc(cx + 6, cy + 7, 2, 0, Math.PI*2); ctx.fill();
+
+    // Qısqaclar
+    ctx.strokeStyle = '#464f5a';
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    if (carrying && boxCount > 0) {
+        // Bağlı — qutu tutur
+        ctx.beginPath(); ctx.moveTo(cx - 10, cy - 1); ctx.lineTo(cx - 13, cy + 3); ctx.lineTo(cx - 10, cy + 6); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(cx + 10, cy - 1); ctx.lineTo(cx + 13, cy + 3); ctx.lineTo(cx + 10, cy + 6); ctx.stroke();
+        // Qutu
+        for (let i = 0; i < boxCount; i++) {
+            ctx.fillStyle = '#a0783c';
+            roundRect(cx - 7, cy - 1 + i * 3, 14, 9, 3);
+            ctx.strokeStyle = '#825f28';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(cx - 7, cy - 1 + i * 3, 14, 9);
+        }
+    } else {
+        // Açıq
+        ctx.beginPath(); ctx.moveTo(cx - 10, cy); ctx.lineTo(cx - 14, cy - 2); ctx.lineTo(cx - 15, cy + 4); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(cx + 10, cy); ctx.lineTo(cx + 14, cy - 2); ctx.lineTo(cx + 15, cy + 4); ctx.stroke();
+    }
+
+    // Baş — sensor
+    ctx.fillStyle = '#4b5564';
+    roundRect(cx - 7, cy - 14, 14, 11, 4);
+    // Vizor
+    ctx.fillStyle = '#3498db';
+    roundRect(cx - 5, cy - 13, 10, 5, 2);
+    // Gözlər — sensor
+    ctx.fillStyle = '#00e6ff';
+    ctx.beginPath(); ctx.arc(cx - 3, cy - 11, 1.5, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx + 3, cy - 11, 1.5, 0, Math.PI*2); ctx.fill();
+    // Ağız
+    ctx.strokeStyle = '#374150';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx - 3, cy - 6); ctx.lineTo(cx + 3, cy - 6); ctx.stroke();
+
+    // Antenna
+    ctx.strokeStyle = '#5a6473';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(cx, cy - 14); ctx.lineTo(cx, cy - 20); ctx.stroke();
+    ctx.fillStyle = '#e74c3c';
+    ctx.beginPath(); ctx.arc(cx, cy - 21, 2, 0, Math.PI*2); ctx.fill();
+
+    ctx.lineWidth = 1;
+}
+
+function drawLabel(cx, cy, text, size) {
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold ' + size + 'px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, cx, cy);
+}
+
+function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+    ctx.fill();
+}
+
+connectWS();
+</script>
+</body>
+</html>

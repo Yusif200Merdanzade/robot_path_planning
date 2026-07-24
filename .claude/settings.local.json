@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(javac -d out src/main/java/com/example/demo/fuzzy/*.java)",
+      "Bash(java -cp out com.example.demo.fuzzy.FuzzyDemo)"
+    ]
+  }
+}
