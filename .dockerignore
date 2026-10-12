@@ -1,0 +1,6 @@
+target/
+.idea/
+.git/
+.claude/
+*.log
+cp.txt

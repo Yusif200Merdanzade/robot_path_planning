@@ -2,7 +2,7 @@
 <html lang="az">
 <head>
     <meta charset="UTF-8">
-    <title>Anbar Robotu — A* Simulyasiya</title>
+    <title>Anbar Robotu — A* / D* Lite</title>
     <style>
         body {
             margin: 0;
@@ -29,6 +29,15 @@
             color: #2c2416;
             min-height: 24px;
         }
+        #planner {
+            font-size: 13px;
+            color: #1f4e79;
+            min-height: 18px;
+            margin-top: 4px;
+            font-family: Consolas, monospace;
+            white-space: pre-line;   /* D* Lite hadisəsi ayrıca sətirdə */
+            text-align: center;
+        }
         #fuzzy {
             font-size: 14px;
             font-weight: bold;
@@ -53,10 +62,11 @@
     </style>
 </head>
 <body>
-    <h1>Anbar Robotu — A* Yol Tapma Simulyasiyası</h1>
+    <h1>Anbar Robotu — A* / D* Lite Yol Tapma Simulyasiyası <small style="font-size:11px;color:#888">v10 · standart paket/sinif adları</small></h1>
     <canvas id="grid" width="720" height="640"></canvas>
     <div id="status">Başlatmaq üçün düyməyə basın</div>
     <div id="fuzzy"></div>
+    <div id="planner"></div>
     <button onclick="startSimulation()">Başlat</button>
     <div id="connection">Bağlantı gözlənilir...</div>
 
@@ -65,6 +75,7 @@ const canvas = document.getElementById('grid');
 const ctx = canvas.getContext('2d');
 const statusEl = document.getElementById('status');
 const fuzzyEl = document.getElementById('fuzzy');
+const plannerEl = document.getElementById('planner');
 const connEl = document.getElementById('connection');
 
 let ws;
@@ -78,13 +89,14 @@ function connectWS() {
     ws = new WebSocket(proto + '//' + location.host + basePath + '/ws/robot');
 
     ws.onopen = () => {
-        connEl.textContent = 'WebSocket bağlı';
+        // "bağlı" həm "qoşulub", həm də "qapalı" kimi oxunur — ona görə birmənalı yazılır
+        connEl.textContent = '🟢 Serverə qoşulub (WebSocket aktivdir)';
         connEl.style.color = '#27ae60';
     };
 
     ws.onmessage = (e) => {
         state = JSON.parse(e.data);
-        draw();
+        onRobotState(state);
         statusEl.textContent = state.status;
         if (state.fuzzyInfo) {
             fuzzyEl.textContent = state.fuzzyInfo;
@@ -92,13 +104,34 @@ function connectWS() {
         } else {
             fuzzyEl.textContent = '';
         }
+        plannerEl.textContent = plannerText(state.planner);
     };
 
     ws.onclose = () => {
-        connEl.textContent = 'Bağlantı kəsildi. Yenidən qoşulur...';
+        connEl.textContent = '🔴 Serverlə əlaqə kəsildi. Yenidən qoşulur...';
         connEl.style.color = '#e74c3c';
         setTimeout(connectWS, 2000);
     };
+}
+
+/**
+ * Planlaşdırıcı paneli. Açılan xana sayı eyni sorğu üçün A*-ın açacağı xana sayı ilə müqayisə olunur.
+ * İlk plan və yenilənmələr ayrı göstərilir: D* Lite ilk planda (geriyə axtarış) A*-dan çox iş görür,
+ * yenilənmələrdə isə əvvəlki hesablamanı saxladığı üçün az — onun üstünlüyü məhz buradadır.
+ */
+function plannerText(p) {
+    if (!p) return '';
+    if (p.name !== 'D* Lite') return '🧭 Planlaşdırıcı: ' + p.name + ' (hər dəfə sıfırdan axtarış)';
+    let text = '🧭 D* Lite | son: ' + p.lastDstar + ' xana (A* olsaydı ' + p.lastAstar + ')'
+        + ' | ilk plan ×' + p.initCount + ': ' + p.initDstar + ' vs A* ' + p.initAstar;
+    if (p.updCount > 0) {
+        text += ' | yenilənmə ×' + p.updCount + ': ' + p.updDstar + ' vs A* ' + p.updAstar;
+        if (p.updAstar > 0 && p.updDstar < p.updAstar) {
+            text += ' → ' + Math.round(100 * (1 - p.updDstar / p.updAstar)) + '% az iş';
+        }
+    }
+    // Son D* Lite hadisəsi (məs. "hərəkət edən robot yolu kəsdi — yol yeniləndi") ayrıca sətirdə
+    return p.event ? p.event + '\n' + text : text;
 }
 
 function startSimulation() {
@@ -108,11 +141,102 @@ function startSimulation() {
     });
 }
 
+// ==================== Hamar hərəkət (yalnız vizual) ====================
+// Server robotları xana-xana göndərir (hər tick bir xana). Brauzer onları əvvəlki xanadan
+// yeni xanaya stepMs ərzində sabit sürətlə sürüşdürür və istiqamətini yumşaq döndərir.
+// Simulyasiya məntiqi dəyişmir: "həqiqi" yer həmişə serverin göndərdiyi xanadır.
+// Eyni məntiq həm bizim robot (anim), həm də gedib-gələn robot-maneə (mover) üçündür.
+function createMover() {
+    return {
+        x: null, y: null,           // ekrandakı mövqe (xana vahidində: col, row); null = ekranda yoxdur
+        fromX: 0, fromY: 0,
+        toX: 0, toY: 0,
+        start: 0, duration: 500,
+        heading: -Math.PI / 2,      // baxdığı istiqamət (radian), əvvəlcə yuxarı
+        targetHeading: -Math.PI / 2,
+        lastFrame: 0
+    };
+}
+const anim = createMover();     // bizim robot
+const mover = createMover();    // hərəkət edən maneə (robot)
+const TURN_RATE = 4;            // dönmə sürəti (1/san): 4 = dönmənin ~86%-i bir addım (0.5 san) ərzində,
+                                // yəni robot döngədə yerində fırlanmır, irəliləyə-irəliləyə qövslə dönür
+
+function onRobotState(s) {
+    moveTo(anim, s.robot.col, s.robot.row, s.stepMs);
+    // Hərəkət edən maneə (MOVING_ROBOT) ekranda sarı robot kimi çəkilir
+    const m = s.objects.find(o => o.type === 'MOVING_ROBOT');
+    if (m) moveTo(mover, m.col, m.row, s.stepMs);
+    else mover.x = null;        // hələ çıxmayıb və ya LiDAR onu görmür
+}
+
+function moveTo(a, tx, ty, stepMs) {
+    if (a.x === null || Math.abs(tx - a.x) + Math.abs(ty - a.y) > 1.5) {
+        // İlk vəziyyət və ya yeni ssenari ("teleport"): sürüşdürmə yoxdur
+        a.x = a.fromX = a.toX = tx;
+        a.y = a.fromY = a.toY = ty;
+        a.start = 0;
+        return;
+    }
+    if (tx === a.toX && ty === a.toY) return;   // eyni xana (gözləmə və ya status yeniləməsi)
+
+    a.fromX = a.x;
+    a.fromY = a.y;
+    a.toX = tx;
+    a.toY = ty;
+    a.start = performance.now();
+    // Bir az qısa müddət: növbəti tick gələnə qədər xananın mərkəzinə çatmış olsun
+    a.duration = (stepMs || 500) * 0.9;
+    a.targetHeading = headingFor(tx - a.fromX, ty - a.fromY);
+}
+
+/**
+ * Hərəkət istiqamətinə uyğun bucaq, yalnız [-180°, 0°] aralığında (ön tərəf sola, yuxarı, ya da sağa).
+ * Robot heç vaxt "aşağı" baxmır: aşağı gedəndə üzü yuxarı qalır (geri-geri gedir). Bucaq bu
+ * aralıqdan çıxmadığı üçün sol↔sağ dönmədə də robot yuxarıdan keçir, bir anlıq belə başıaşağı olmur.
+ */
+function headingFor(dx, dy) {
+    if (dy > 0 && Math.abs(dy) >= Math.abs(dx)) return -Math.PI / 2;   // aşağı: üzü yuxarı qalır
+    const a = Math.atan2(dy, dx);
+    return a > 0 ? -Math.PI : a;                                       // sola = -180° (+180° yox)
+}
+
+function updateAnim(a, now) {
+    const dt = a.lastFrame ? Math.min((now - a.lastFrame) / 1000, 0.1) : 0;
+    a.lastFrame = now;
+
+    if (a.start) {
+        // rAF vaxtı mesajın gəldiyi andan bir az əvvəl ola bilər: t mənfi olmasın
+        const t = Math.max(0, Math.min((now - a.start) / a.duration, 1));
+        a.x = a.fromX + (a.toX - a.fromX) * t;
+        a.y = a.fromY + (a.toY - a.fromY) * t;
+        if (t >= 1) a.start = 0;
+    }
+
+    // Eksponensial yaxınlaşma: döngədə 90° birdən yox, yumşaq dönür. Bucaqlar [-180°, 0°]
+    // aralığında olduğu üçün "ən qısa yol" normallaşdırması edilmir: o, sol↔sağ dönmədə
+    // robotu aşağıdan (başıaşağı) fırladardı.
+    const diff = a.targetHeading - a.heading;
+    a.heading += diff * (1 - Math.exp(-TURN_RATE * dt));
+}
+
+function frame(now) {
+    // Növbəti kadr əvvəlcə planlaşdırılır: draw()-da xəta olsa belə animasiya döngüsü ölməsin
+    requestAnimationFrame(frame);
+    if (state && anim.x !== null) {
+        updateAnim(anim, now);
+        if (mover.x !== null) updateAnim(mover, now);
+        draw();
+    }
+}
+
 function draw() {
     if (!state) return;
     const rows = state.rows, cols = state.cols;
-    canvas.width = cols * CELL + 2 * MARGIN;
-    canvas.height = rows * CELL + 2 * MARGIN;
+    const w = cols * CELL + 2 * MARGIN, h = rows * CELL + 2 * MARGIN;
+    // Ölçünü yalnız dəyişəndə təyin et (canvas.width təyini hər kadrda bahalıdır)
+    if (canvas.width !== w) canvas.width = w;
+    if (canvas.height !== h) canvas.height = h;
 
     ctx.fillStyle = '#d2c8b4';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -174,16 +298,8 @@ function draw() {
             ctx.fillStyle = '#c0392b';
             roundRect(x + 4, y + 4, CELL - 8, CELL - 8, 5);
             drawLabel(cx, cy, 'M', 9);
-        } else if (obj.type === 'HUMAN') {
-            ctx.fillStyle = 'rgba(241,196,15,0.3)';
-            ctx.beginPath();
-            ctx.arc(cx, cy, CELL/2 - 2, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = '#f39c12';
-            ctx.beginPath();
-            ctx.arc(cx, cy, CELL/2 - 7, 0, Math.PI * 2);
-            ctx.fill();
-            drawLabel(cx, cy, 'H.M', 8);
+        } else if (obj.type === 'MOVING_ROBOT') {
+            // Hərəkət edən maneə robot kimi, hamar mövqedə ayrıca çəkilir (bax: drawMovingRobot)
         } else if (obj.type === 'PACKAGE') {
             for (let i = obj.count - 1; i >= 0; i--) {
                 const bx = x + 10 + i * 2, by = y + 12 - i * 6;
@@ -196,23 +312,53 @@ function draw() {
         }
     }
 
-    // İz
+    // Robotun ekrandakı (animasiya olunan) mərkəzi
+    const rx = MARGIN + anim.x * CELL + CELL/2;
+    const ry = MARGIN + anim.y * CELL + CELL/2;
+
+    // Planlaşdırılan yol (qırıq xətt): D* Lite/A* yolu yeniləyəndə ekranda dərhal dəyişir.
+    // LiDAR rejimində yolun hələ görülməmiş ərazidən keçən hissəsi solğun çəkilir: robot oranı
+    // bilmir, sadəcə boş fərz edir (D* Lite-ın "boş fəza fərziyyəsi") — kəşf etdikcə yol düzəlir.
+    if (state.plan && state.plan.length > 1) {
+        const isDstar = state.planner && state.planner.name === 'D* Lite';
+        const known = 'rgba(41, 128, 185, ' + (isDstar ? 0.85 : 0.45) + ')';
+        const assumed = 'rgba(41, 128, 185, 0.25)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 5]);
+        let px = rx, py = ry;
+        for (let i = 1; i < state.plan.length; i++) {
+            const p = state.plan[i];
+            const x = MARGIN + p.col * CELL + CELL/2, y = MARGIN + p.row * CELL + CELL/2;
+            ctx.strokeStyle = state.hasLidar && !discoveredSet.has(p.row + ',' + p.col) ? assumed : known;
+            ctx.beginPath();
+            ctx.moveTo(px, py);
+            ctx.lineTo(x, y);
+            ctx.stroke();
+            px = x; py = y;
+        }
+        ctx.setLineDash([]);
+        ctx.lineWidth = 1;
+    }
+
+    // İz: son nöqtə robotun hazırkı xanasıdır, onu robotun ekrandakı yeri ilə əvəz edirik
+    // ki, xətt robotdan qabağa qaçmasın
     if (state.trail.length > 1) {
         ctx.strokeStyle = 'rgba(46,204,113,0.5)';
         ctx.lineWidth = 3;
         ctx.lineCap = 'round';
         ctx.beginPath();
-        for (let i = 0; i < state.trail.length; i++) {
+        for (let i = 0; i < state.trail.length - 1; i++) {
             const t = state.trail[i];
             const tx = MARGIN + t.col * CELL + CELL/2;
             const ty = MARGIN + t.row * CELL + CELL/2;
             if (i === 0) ctx.moveTo(tx, ty);
             else ctx.lineTo(tx, ty);
         }
+        ctx.lineTo(rx, ry);
         ctx.stroke();
         ctx.lineWidth = 1;
 
-        for (const t of state.trail) {
+        for (const t of state.trail.slice(0, -1)) {
             ctx.fillStyle = 'rgba(39,174,96,0.6)';
             ctx.beginPath();
             ctx.arc(MARGIN + t.col * CELL + CELL/2, MARGIN + t.row * CELL + CELL/2, 3, 0, Math.PI*2);
@@ -228,87 +374,240 @@ function draw() {
     roundRect(gx - s, gy - s, 2*s, 2*s, 4);
     drawLabel(gx, gy, 'HƏDƏF', 10);
 
-    // Robot
-    const rx = MARGIN + state.robot.col * CELL + CELL/2;
-    const ry = MARGIN + state.robot.row * CELL + CELL/2;
-    drawRobot(rx, ry, state.carrying, state.boxCount);
+    if (mover.x !== null) {
+        ctx.save();
+        ctx.translate(MARGIN + mover.x * CELL + CELL/2, MARGIN + mover.y * CELL + CELL/2);
+        ctx.rotate(mover.heading + Math.PI / 2);
+        drawMovingRobot();
+        ctx.restore();
+    }
+
+    if (state.hasLidar && state.lidarRange) drawLidar(rx, ry);
+
+    // Robot: şəkil "yuxarı" baxır (heading = -90°), ona görə +90° əlavə edib fırladırıq
+    ctx.save();
+    ctx.translate(rx, ry);
+    ctx.rotate(anim.heading + Math.PI / 2);
+    drawRobot(0, 0, state.carrying, state.boxCount);
+    ctx.restore();
 }
 
+/**
+ * Robot yuxarıdan görünüşdə çəkilir (xəritə də yuxarıdan görünür). Ön tərəf "yuxarı"dır (-y),
+ * çağıran tərəf kontekst fırladır. Yuxarıdan görünüş hansı istiqamətə dönsə də düzgün görünür,
+ * öndən görünüşlü köhnə şəkil isə robot aşağı gedəndə başıaşağı olurdu.
+ */
 function drawRobot(cx, cy, carrying, boxCount) {
-    // Kölgə
-    ctx.fillStyle = 'rgba(0,0,0,0.12)';
+    // Kölgə (dairəvi: fırlanmadan asılı deyil)
+    ctx.fillStyle = 'rgba(0,0,0,0.15)';
     ctx.beginPath();
-    ctx.ellipse(cx, cy + 18, 12, 3, 0, 0, Math.PI * 2);
+    ctx.arc(cx + 2, cy + 2, 15, 0, Math.PI * 2);
     ctx.fill();
 
-    // Təkərlər
+    // Təkərlər: hər tərəfdə ikisi
     ctx.fillStyle = '#32373c';
-    ctx.beginPath(); ctx.arc(cx - 9, cy + 8, 4, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(cx - 9, cy + 18, 4, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(cx + 9, cy + 8, 4, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(cx + 9, cy + 18, 4, 0, Math.PI*2); ctx.fill();
-    ctx.strokeStyle = '#50555a';
-    ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.arc(cx - 9, cy + 8, 4, 0, Math.PI*2); ctx.stroke();
-    ctx.beginPath(); ctx.arc(cx - 9, cy + 18, 4, 0, Math.PI*2); ctx.stroke();
-    ctx.beginPath(); ctx.arc(cx + 9, cy + 8, 4, 0, Math.PI*2); ctx.stroke();
-    ctx.beginPath(); ctx.arc(cx + 9, cy + 18, 4, 0, Math.PI*2); ctx.stroke();
+    for (const sx of [-1, 1]) {
+        roundRect(cx + sx * 13 - 3, cy - 10, 6, 7, 2);
+        roundRect(cx + sx * 13 - 3, cy + 3, 6, 7, 2);
+    }
 
     // Gövdə — metal
     ctx.fillStyle = '#5a6473';
-    roundRect(cx - 10, cy - 4, 20, 14, 4);
+    roundRect(cx - 11, cy - 12, 22, 24, 5);
     ctx.fillStyle = '#6e7887';
-    roundRect(cx - 8, cy - 4, 16, 5, 3);
-    // LED işıqları
-    ctx.fillStyle = '#2ecc71';
-    ctx.beginPath(); ctx.arc(cx - 6, cy + 7, 2, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#e74c3c';
-    ctx.beginPath(); ctx.arc(cx + 6, cy + 7, 2, 0, Math.PI*2); ctx.fill();
+    roundRect(cx - 8, cy - 8, 16, 17, 4);
 
-    // Qısqaclar
+    // Ön sensor paneli (vizor) — robotun hansı tərəfə baxdığı buradan görünür
+    ctx.fillStyle = '#3498db';
+    roundRect(cx - 8, cy - 12, 16, 4, 2);
+    ctx.fillStyle = '#00e6ff';
+    ctx.beginPath(); ctx.arc(cx - 4, cy - 10, 1.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx + 4, cy - 10, 1.5, 0, Math.PI * 2); ctx.fill();
+
+    // LiDAR qübbəsi (mərkəzdə)
+    ctx.fillStyle = '#4b5564';
+    ctx.beginPath(); ctx.arc(cx, cy + 1, 4.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#00e6ff';
+    ctx.beginPath(); ctx.arc(cx, cy - 1, 1.5, 0, Math.PI * 2); ctx.fill();
+
+    // Arxa LED-lər
+    ctx.fillStyle = '#2ecc71';
+    ctx.beginPath(); ctx.arc(cx - 6, cy + 9, 1.8, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#e74c3c';
+    ctx.beginPath(); ctx.arc(cx + 6, cy + 9, 1.8, 0, Math.PI * 2); ctx.fill();
+
+    // Ön qısqaclar (çəngəllər)
     ctx.strokeStyle = '#464f5a';
     ctx.lineWidth = 2;
     ctx.lineCap = 'round';
     if (carrying && boxCount > 0) {
-        // Bağlı — qutu tutur
-        ctx.beginPath(); ctx.moveTo(cx - 10, cy - 1); ctx.lineTo(cx - 13, cy + 3); ctx.lineTo(cx - 10, cy + 6); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(cx + 10, cy - 1); ctx.lineTo(cx + 13, cy + 3); ctx.lineTo(cx + 10, cy + 6); ctx.stroke();
-        // Qutu
+        // Qutu robotun önündə, qısqaclar onu yanlardan sıxır
         for (let i = 0; i < boxCount; i++) {
             ctx.fillStyle = '#a0783c';
-            roundRect(cx - 7, cy - 1 + i * 3, 14, 9, 3);
+            roundRect(cx - 7, cy - 22 - i * 3, 14, 9, 2);
             ctx.strokeStyle = '#825f28';
             ctx.lineWidth = 1;
-            ctx.strokeRect(cx - 7, cy - 1 + i * 3, 14, 9);
+            ctx.strokeRect(cx - 7, cy - 22 - i * 3, 14, 9);
         }
+        ctx.strokeStyle = '#464f5a';
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(cx - 8, cy - 12); ctx.lineTo(cx - 9, cy - 22); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(cx + 8, cy - 12); ctx.lineTo(cx + 9, cy - 22); ctx.stroke();
     } else {
-        // Açıq
-        ctx.beginPath(); ctx.moveTo(cx - 10, cy); ctx.lineTo(cx - 14, cy - 2); ctx.lineTo(cx - 15, cy + 4); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(cx + 10, cy); ctx.lineTo(cx + 14, cy - 2); ctx.lineTo(cx + 15, cy + 4); ctx.stroke();
+        // Açıq qısqaclar — bir az kənara aralı
+        ctx.beginPath(); ctx.moveTo(cx - 7, cy - 12); ctx.lineTo(cx - 10, cy - 19); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(cx + 7, cy - 12); ctx.lineTo(cx + 10, cy - 19); ctx.stroke();
+    }
+    ctx.lineWidth = 1;
+}
+
+/**
+ * Hərəkət edən maneə: başqa bir anbar robotu (sarı-qara, yük platformalı AMR).
+ * Bizim robotdan rəngi və formasıyla seçilir. Yuxarıdan görünüş, ön tərəf "yuxarı"dır (-y),
+ * çağıran tərəf kontekst fırladır. Üstündəki narıncı mayak yanıb-sönür: "diqqət, hərəkətdəyəm".
+ */
+function drawMovingRobot() {
+    // Kölgə
+    ctx.fillStyle = 'rgba(0,0,0,0.15)';
+    ctx.beginPath();
+    ctx.arc(2, 2, 17, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Təkərlər
+    ctx.fillStyle = '#2c2c2c';
+    for (const sx of [-1, 1]) {
+        roundRect(sx * 15 - 3, -11, 6, 8, 2);
+        roundRect(sx * 15 - 3, 3, 6, 8, 2);
     }
 
-    // Baş — sensor
-    ctx.fillStyle = '#4b5564';
-    roundRect(cx - 7, cy - 14, 14, 11, 4);
-    // Vizor
-    ctx.fillStyle = '#3498db';
-    roundRect(cx - 5, cy - 13, 10, 5, 2);
-    // Gözlər — sensor
-    ctx.fillStyle = '#00e6ff';
-    ctx.beginPath(); ctx.arc(cx - 3, cy - 11, 1.5, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(cx + 3, cy - 11, 1.5, 0, Math.PI*2); ctx.fill();
-    // Ağız
-    ctx.strokeStyle = '#374150';
-    ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(cx - 3, cy - 6); ctx.lineTo(cx + 3, cy - 6); ctx.stroke();
-
-    // Antenna
-    ctx.strokeStyle = '#5a6473';
+    // Gövdə — sarı sənaye rəngi
+    ctx.fillStyle = '#f1c40f';
+    roundRect(-13, -14, 26, 28, 6);
+    ctx.strokeStyle = '#b7950b';
     ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(cx, cy - 14); ctx.lineTo(cx, cy - 20); ctx.stroke();
-    ctx.fillStyle = '#e74c3c';
-    ctx.beginPath(); ctx.arc(cx, cy - 21, 2, 0, Math.PI*2); ctx.fill();
+    ctx.stroke();
 
+    // Yük platforması — qara-sarı xəbərdarlıq zolaqlı
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(-9, -6, 18, 15);
+    ctx.clip();
+    ctx.fillStyle = '#2c2c2c';
+    ctx.fillRect(-9, -6, 18, 15);
+    ctx.strokeStyle = '#f1c40f';
+    ctx.lineWidth = 2.5;
+    for (let k = -24; k < 24; k += 6) {
+        ctx.beginPath();
+        ctx.moveTo(k, -6);
+        ctx.lineTo(k + 15, 9);
+        ctx.stroke();
+    }
+    ctx.restore();
+
+    // Ön sensor zolağı
+    ctx.fillStyle = '#2c3e50';
+    roundRect(-9, -13, 18, 5, 2);
+    ctx.fillStyle = '#ff5e3a';
+    ctx.beginPath(); ctx.arc(-5, -10.5, 1.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(5, -10.5, 1.5, 0, Math.PI * 2); ctx.fill();
+
+    // Mayak (yanıb-sönən)
+    const on = Math.floor(performance.now() / 400) % 2 === 0;
+    if (on) {
+        ctx.fillStyle = 'rgba(255, 140, 0, 0.35)';
+        ctx.beginPath(); ctx.arc(0, 1.5, 8, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.fillStyle = on ? '#ff8c00' : '#a0522d';
+    ctx.beginPath(); ctx.arc(0, 1.5, 3.5, 0, Math.PI * 2); ctx.fill();
+    ctx.lineWidth = 1;
+}
+
+/**
+ * LiDAR izi (ssenari 3 və 4): yalnız vizualdır, sensorun məntiqi serverdədir.
+ *   - skan zonası: robotun hazırkı xanasından lidarRange addım (Manhattan) içindəki xanalar,
+ *     yəni serverdəki LidarSensor.scan()-ın gördüyü romb;
+ *   - fırlanan şüa: real LiDAR kimi 360° süpürür, rombdan kənara çıxmır;
+ *   - lazer əksi: zonadakı hər maneəyə robotdan qırmızı şüa və əks nöqtəsi.
+ */
+const LIDAR_SWEEP_PER_SEC = 1.5;    // şüanın saniyədə dövr sayı
+
+function drawLidar(rx, ry) {
+    const range = state.lidarRange;
+    const rr = state.robot.row, rc = state.robot.col;
+    const reach = (range + 0.5) * CELL;
+    const discovered = new Set((state.discovered || []).map(d => d.row + ',' + d.col));
+
+    // Hər şey anbarın daxilində çəkilir: şüa divardan kənara çıxmasın
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(MARGIN, MARGIN, state.cols * CELL, state.rows * CELL);
+    ctx.clip();
+
+    // 1. Skan zonası — yalnız LiDAR-ın artıq gördüyü xanalar. Server skanı robot addım atmazdan
+    //    əvvəl edir, ona görə yeni xananın ətrafındakı ön kənar hələ "?" ola bilər: onu boyamırıq.
+    ctx.fillStyle = 'rgba(0, 200, 255, 0.10)';
+    ctx.strokeStyle = 'rgba(0, 200, 255, 0.35)';
+    for (let dr = -range; dr <= range; dr++) {
+        for (let dc = -range; dc <= range; dc++) {
+            const r = rr + dr, c = rc + dc;
+            if (Math.abs(dr) + Math.abs(dc) > range || !discovered.has(r + ',' + c)) continue;
+            ctx.fillRect(MARGIN + c * CELL, MARGIN + r * CELL, CELL, CELL);
+        }
+    }
+
+    // 2. Fırlanan şüa — romb formasına kəsilir (clip)
+    ctx.beginPath();
+    ctx.moveTo(rx, ry - reach);
+    ctx.lineTo(rx + reach, ry);
+    ctx.lineTo(rx, ry + reach);
+    ctx.lineTo(rx - reach, ry);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.clip();
+    const angle = (performance.now() / 1000) * LIDAR_SWEEP_PER_SEC * 2 * Math.PI;
+    const TAIL = 0.9, STEPS = 12;           // şüanın arxasında sönən "quyruq" (radian)
+    for (let i = 0; i < STEPS; i++) {
+        const a0 = angle - TAIL * (i + 1) / STEPS, a1 = angle - TAIL * i / STEPS;
+        ctx.fillStyle = 'rgba(0, 220, 255, ' + (0.28 * (1 - i / STEPS)).toFixed(3) + ')';
+        ctx.beginPath();
+        ctx.moveTo(rx, ry);
+        ctx.arc(rx, ry, reach * 1.5, a0, a1);
+        ctx.closePath();
+        ctx.fill();
+    }
+    ctx.strokeStyle = 'rgba(0, 240, 255, 0.9)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(rx, ry);
+    ctx.lineTo(rx + Math.cos(angle) * reach * 1.5, ry + Math.sin(angle) * reach * 1.5);
+    ctx.stroke();
+    ctx.restore();   // həm romb, həm anbar kəsiyi (clip) götürülür
+
+    // 3. Lazer əksləri: zonadakı maneələr
+    for (const obj of state.objects) {
+        if (obj.type === 'PACKAGE') continue;
+        if (Math.abs(obj.row - rr) + Math.abs(obj.col - rc) > range) continue;
+        // Hərəkət edən robotda əks nöqtəsi onun ekrandakı (hamar) yerinə düşür
+        const moving = obj.type === 'MOVING_ROBOT' && mover.x !== null;
+        const ox = MARGIN + (moving ? mover.x : obj.col) * CELL + CELL / 2;
+        const oy = MARGIN + (moving ? mover.y : obj.row) * CELL + CELL / 2;
+        ctx.strokeStyle = 'rgba(231, 76, 60, 0.55)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        ctx.moveTo(rx, ry);
+        ctx.lineTo(ox, oy);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        // Ağ halqa: qırmızı forkliftin üstündə də əks nöqtəsi seçilsin
+        ctx.fillStyle = '#e74c3c';
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(ox, oy, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+    }
     ctx.lineWidth = 1;
 }
 
@@ -336,6 +635,7 @@ function roundRect(x, y, w, h, r) {
 }
 
 connectWS();
+requestAnimationFrame(frame);
 </script>
 </body>
 </html>
