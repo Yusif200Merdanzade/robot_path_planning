@@ -62,7 +62,7 @@
     </style>
 </head>
 <body>
-    <h1>Anbar Robotu — A* / D* Lite Yol Tapma Simulyasiyası <small style="font-size:11px;color:#888">v11 · avtomatik başlama</small></h1>
+    <h1>Anbar Robotu — A* / D* Lite Yol Tapma Simulyasiyası <small style="font-size:11px;color:#888">v12 · bərabər sürət (addım növbəsi)</small></h1>
     <canvas id="grid" width="720" height="640"></canvas>
     <div id="status">Simulyasiya yüklənir...</div>
     <div id="fuzzy"></div>
@@ -161,7 +161,8 @@ function createMover() {
         x: null, y: null,           // ekrandakı mövqe (xana vahidində: col, row); null = ekranda yoxdur
         fromX: 0, fromY: 0,
         toX: 0, toY: 0,
-        start: 0, duration: 500,
+        start: 0, duration: 500, stepMs: 500,
+        queue: [],                  // gəlib, hələ oynadılmamış xanalar (şəbəkə bir neçə vəziyyəti birdən gətirəndə)
         heading: -Math.PI / 2,      // baxdığı istiqamət (radian), əvvəlcə yuxarı
         targetHeading: -Math.PI / 2,
         lastFrame: 0
@@ -180,23 +181,41 @@ function onRobotState(s) {
     else mover.x = null;        // hələ çıxmayıb və ya LiDAR onu görmür
 }
 
+/**
+ * Robotu yeni xanaya aparır. Server addımları hər stepMs-də bir göndərir, amma buludda (zəif CPU,
+ * şəbəkə) iki addım brauzerə eyni anda gələ bilir. Onda ikinci addım dərhal oynadılsaydı robot iki
+ * xananı bir addımın vaxtında keçib "qaçardı". Ona görə addımlar növbəyə düşür və hər biri öz
+ * vaxtında oynadılır: robot bütün ssenarilərdə eyni sürətlə gedir.
+ */
 function moveTo(a, tx, ty, stepMs) {
-    if (a.x === null || Math.abs(tx - a.x) + Math.abs(ty - a.y) > 1.5) {
+    const last = a.queue.length ? a.queue[a.queue.length - 1] : {x: a.toX, y: a.toY};
+    if (a.x === null || Math.abs(tx - last.x) + Math.abs(ty - last.y) > 1.5) {
         // İlk vəziyyət və ya yeni ssenari ("teleport"): sürüşdürmə yoxdur
         a.x = a.fromX = a.toX = tx;
         a.y = a.fromY = a.toY = ty;
         a.start = 0;
+        a.queue = [];
         return;
     }
-    if (tx === a.toX && ty === a.toY) return;   // eyni xana (gözləmə və ya status yeniləməsi)
+    if (tx === last.x && ty === last.y) return;   // eyni xana (gözləmə və ya status yeniləməsi)
 
+    a.stepMs = stepMs || 500;
+    if (a.start) {
+        a.queue.push({x: tx, y: ty});   // əvvəlki addım hələ bitməyib — növbəyə
+        return;
+    }
+    startMove(a, tx, ty, performance.now());
+}
+
+function startMove(a, tx, ty, now, catchUp) {
     a.fromX = a.x;
     a.fromY = a.y;
     a.toX = tx;
     a.toY = ty;
-    a.start = performance.now();
-    // Bir az qısa müddət: növbəti tick gələnə qədər xananın mərkəzinə çatmış olsun
-    a.duration = (stepMs || 500) * 0.9;
+    a.start = now;
+    // Bir az qısa müddət: növbəti tick gələnə qədər xananın mərkəzinə çatmış olsun.
+    // Növbədən gələn addım bir az tez oynadılır ki, gecikmə yığılıb qalmasın (sıçrayış olmadan).
+    a.duration = a.stepMs * (catchUp ? 0.7 : 0.9);
     a.targetHeading = headingFor(tx - a.fromX, ty - a.fromY);
 }
 
@@ -220,7 +239,11 @@ function updateAnim(a, now) {
         const t = Math.max(0, Math.min((now - a.start) / a.duration, 1));
         a.x = a.fromX + (a.toX - a.fromX) * t;
         a.y = a.fromY + (a.toY - a.fromY) * t;
-        if (t >= 1) a.start = 0;
+        if (t >= 1) {
+            a.start = 0;
+            const next = a.queue.shift();
+            if (next) startMove(a, next.x, next.y, now, true);
+        }
     }
 
     // Eksponensial yaxınlaşma: döngədə 90° birdən yox, yumşaq dönür. Bucaqlar [-180°, 0°]

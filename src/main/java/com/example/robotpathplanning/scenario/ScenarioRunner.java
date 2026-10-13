@@ -621,9 +621,13 @@ public class ScenarioRunner {
         lastPlannerEvent = null;
     }
 
-    /** Hər tick-də əvvəlcə hərəkət edən robot yerini dəyişir, sonra ssenarinin öz məntiqi işləyir. */
+    /**
+     * Hər tick-də əvvəlcə hərəkət edən robot yerini dəyişir, sonra ssenarinin öz məntiqi işləyir.
+     * Fixed delay: tick gecikəndə (məs. buludda zəif CPU) qaçırılan tick-lər ard-arda "borc kimi"
+     * işlədilmir — əks halda robot bir anda bir neçə xana irəli qaçırdı.
+     */
     private void loop(Runnable tick) {
-        loop = executor.scheduleAtFixedRate(safe(() -> {
+        loop = executor.scheduleWithFixedDelay(safe(() -> {
             Cell movingRobotBefore = obstacles.movingRobot();
             obstacles.tick(robotCell());
             Cell movingRobotAfter = obstacles.movingRobot();
