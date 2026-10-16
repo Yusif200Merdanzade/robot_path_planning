@@ -62,7 +62,8 @@
     </style>
 </head>
 <body>
-    <h1>Anbar Robotu — A* / D* Lite Yol Tapma Simulyasiyası <small style="font-size:11px;color:#888">v14 · maneəyə çatanda yol dəyişir, ssenari 3-də V2V</small></h1>
+    <button onclick="logout()" style="position:absolute;top:12px;right:16px;margin:0;padding:6px 14px;font-size:13px;background:#7a6e5a">Çıxış</button>
+    <h1>Anbar Robotu — A* / D* Lite Yol Tapma Simulyasiyası <small style="font-size:11px;color:#888">v16 · hər açılışda giriş tələb olunur</small></h1>
     <canvas id="grid" width="720" height="640"></canvas>
     <div id="status">Simulyasiya yüklənir...</div>
     <div id="fuzzy"></div>
@@ -84,10 +85,44 @@ let lastMessageAt = 0;   // serverdən son vəziyyətin gəldiyi an (0 = bu qoş
 const CELL = 55;
 const MARGIN = 30;
 
+// ==================== Giriş (JWT) ====================
+// Token login.html-dən sessionStorage ilə ötürülür və dərhal oradan silinir — yalnız bu səhifənin
+// yaddaşında qalır. Ona görə səhifə hər açılanda/yenilənəndə istifadəçi adı və parol yenidən soruşulur.
+// Yoxdursa və ya vaxtı keçibsə giriş səhifəsinə qayıdılır. Server də hər API/WebSocket sorğusunda
+// tokeni yoxlayır — buradakı yoxlama yalnız istifadəçi rahatlığı üçündür.
+const accessToken = sessionStorage.getItem('accessToken');
+sessionStorage.removeItem('accessToken');
+localStorage.removeItem('accessToken');   // v15-dən qalmış köhnə token
+
+function getToken() {
+    const token = accessToken;
+    if (!token) return null;
+    try {
+        const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+        return payload.exp * 1000 > Date.now() ? token : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+function goLogin() {
+    location.replace(location.pathname.replace(/\/+$/, '') + '/login.html');
+}
+
+function logout() {
+    // Sessiya yoxdur (stateless) — token yalnız bu səhifənin yaddaşındadır, səhifədən çıxmaq kifayətdir
+    goLogin();
+}
+
+if (!getToken()) goLogin();
+
 function connectWS() {
+    const token = getToken();
+    if (!token) { goLogin(); return; }
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const basePath = location.pathname.replace(/\/+$/, '');
-    ws = new WebSocket(proto + '//' + location.host + basePath + '/ws/robot');
+    // Brauzerin WebSocket API-si Authorization başlığı göndərə bilmir — token ünvanda ötürülür
+    ws = new WebSocket(proto + '//' + location.host + basePath + '/ws/robot?token=' + encodeURIComponent(token));
     lastMessageAt = 0;
 
     ws.onopen = () => {
@@ -146,7 +181,12 @@ function plannerText(p) {
 
 function startSimulation() {
     const basePath = location.pathname.replace(/\/+$/, '');
-    fetch(basePath + '/api/start').then(r => r.json()).then(() => {
+    const token = getToken();
+    if (!token) { goLogin(); return; }
+    fetch(basePath + '/api/start', { headers: { 'Authorization': 'Bearer ' + token } }).then(r => {
+        if (r.status === 401) { goLogin(); throw new Error('giriş tələb olunur'); }
+        return r.json();
+    }).then(() => {
         statusEl.textContent = 'Simulyasiya başladı...';
     });
 }
