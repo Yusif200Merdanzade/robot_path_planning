@@ -57,6 +57,8 @@ public class ScenarioRunner {
     private final MamdaniFuzzyInferenceSystem fis = new MamdaniFuzzyInferenceSystem();
     private final Random random = new Random();
     private ScheduledFuture<?> loop;
+    private Runnable loopTick;               // işləyən ssenarinin tick-i, null = dövr dayanıb
+    private long nextTickAt;                 // növbəti tick-in planlı vaxtı (System.nanoTime)
 
     // ---- Cari ssenarinin vəziyyəti (reset() ilə sıfırlanır) ----
     private int scenario;
@@ -86,6 +88,7 @@ public class ScenarioRunner {
     private int faceoffLeft;                 // V2V dayanmasının qalan tick-ləri, -1 = dayanma yoxdur
     private int faceoffTotal;
     private int faceoffCooldown;             // dayanmadan sonra dərhal yenisi başlamasın
+    private boolean faceoffSettled;          // bu görüşdə V2V razılaşması olub: robotlar aralanana qədər yenisi yoxdur
     private boolean movingRobotShownLastFrame; // hərəkət edən robot brauzerə göndərilən sonuncu kadrda görünürdümü
 
     // ---- D* Lite (ssenari 2, 3 və 4) ----
@@ -183,16 +186,8 @@ public class ScenarioRunner {
         if (handleFaceoff()) return;
         if (pickedUp && triggerObstacle()) return;
 
-        // Hərəkət edən robot çıxandan sonra yol D* Lite ilə saxlanır: o, robotun qarşıdakı yolunu
-        // kəsən kimi D* Lite yalnız dəyişən xanaları yeniləyib yeni yol verir, robot dayanmadan davam edir
-        String event = null;
-        Cell movingRobot = obstacles.movingRobot();
-        if (dstar != null && movingRobot != null && remainingPathContains(movingRobot)) {
-            if (replan(planIncremental(robotCell(), GOAL))) {
-                event = plannerEvent("🧭 D* Lite: hərəkət edən robot yolu kəsdi — yol yeniləndi");
-            }
-        }
-
+        // Robot maneəyə çatmamış yolunu dəyişmir: yol yalnız növbəti xana bağlı olanda (maneə ilə üz-üzə)
+        // yenilənir. Hərəkət edən robotla üz-üzə gələndə əvvəl V2V dayanması olur (handleFaceoff)
         if (world.isBlocked(nextCell())) {
             // Fuzzy STOP demiş statik maneə ilə üz-üzə: robot əvvəl dayanıb gözləyir, sonra yan keçir
             if (stopAtObstacles.remove(nextCell())) {
@@ -209,17 +204,8 @@ public class ScenarioRunner {
             send();
             return;
         }
-        stepIfOperatorAllows(event != null ? event
-                : pickedUp ? "Robot qutu daşıyır (maneəli yol)..." : "Robot qutuya gedir...");
+        stepIfOperatorAllows(pickedUp ? "Robot qutu daşıyır (maneəli yol)..." : "Robot qutuya gedir...");
         startFaceoffIfAdjacent();
-    }
-
-    /** Hərəkət edən maneə robotun qarşıdakı yolunun üstündədirmi (robotun öz xanasından sonra). */
-    private boolean remainingPathContains(Cell c) {
-        for (int i = robotIndex + 1; i < path.size(); i++) {
-            if (path.get(i).equals(c)) return true;
-        }
-        return false;
     }
 
     /** D* Lite hadisəsini planlaşdırıcı panelində saxlayır və status üçün qaytarır. */
@@ -243,6 +229,7 @@ public class ScenarioRunner {
         if (faceoffLeft == 0) {
             faceoffLeft = -1;
             faceoffCooldown = FACEOFF_COOLDOWN_TICKS;
+            faceoffSettled = true;
             obstacles.resume();
             show("📡 V2V: razılaşma tamam — hər iki robot hərəkətə davam edir");
             return true;
@@ -250,6 +237,11 @@ public class ScenarioRunner {
         if (faceoffCooldown > 0) {
             faceoffCooldown--;
             return false;
+        }
+        // Razılaşmadan sonra robotlar yan-yana getsə də V2V təkrarlanmır; yeni görüş yalnız aralanandan sonra
+        Cell movingRobot = obstacles.movingRobot();
+        if (faceoffSettled && (movingRobot == null || robotCell().distanceTo(movingRobot) >= 3)) {
+            faceoffSettled = false;
         }
         return startFaceoffIfAdjacent();
     }
@@ -260,7 +252,7 @@ public class ScenarioRunner {
      * çağırılır: əks halda hərəkət edən robot hər tick-də birinci hərəkət etdiyi üçün yan-yana gəlmə qaçırılırdı.
      */
     private boolean startFaceoffIfAdjacent() {
-        if (faceoffLeft >= 0 || faceoffCooldown > 0 || !movingRobotShownLastFrame) return false;
+        if (faceoffLeft >= 0 || faceoffCooldown > 0 || faceoffSettled || !movingRobotShownLastFrame) return false;
         if (robotCell().distanceTo(obstacles.movingRobot()) != 1) return false;
         obstacles.pause();
         faceoffTotal = FACEOFF_MIN_TICKS + random.nextInt(FACEOFF_MAX_TICKS - FACEOFF_MIN_TICKS + 1);
@@ -300,9 +292,10 @@ public class ScenarioRunner {
         if (obstacles.movingRobot() == null
                 && (robot.distanceTo(MOVING_ROBOT_START) <= MOVING_ROBOT_SPAWN_DISTANCE || path.size() - robotIndex <= 5)) {
             obstacles.startMovingRobot(MOVING_ROBOT_START.row, MOVING_ROBOT_START.col, MOVING_ROBOT_MAX_COL, MOVING_ROBOT_START.col);
-            // Mühit dinamik oldu: bundan sonra yol D* Lite ilə saxlanır və artımlı yenilənir
-            replan(planIncremental(robot, GOAL));
-            plannerEvent("🧭 D* Lite işə düşdü: dinamik maneə — yol yenidən quruldu");
+            // Mühit dinamik oldu: D* Lite hazırlanır, amma robot öz yolu ilə davam edir — yol yalnız
+            // maneə ilə üz-üzə gələndə (növbəti xana bağlı olanda) yenilənir
+            planIncremental(robot, GOAL);
+            plannerEvent("🧭 D* Lite işə düşdü: dinamik maneə — robot maneəyə çatanda yol yenilənəcək");
             // Hərəkətli maneə = "yaxşı vəziyyət" (HAPPY + VERY_SLOW -> NONE -> CONTINUE): robot davam edir
             if (obstacleFuzzy("hərəkətli maneə", 10, 10, false).action == CONTINUE) {
                 stepAfterSpawn("HƏRƏKƏT EDƏN MANEə ÇIXDI! 🧭 D* Lite işə düşdü — robot yoluna davam edir");
@@ -376,7 +369,7 @@ public class ScenarioRunner {
         planWithLidar = true;
         path = planIncremental(START, BOX_CELL);
         show("LİDAR ilə kəşf başladı — D* Lite yalnız sensorun gördüyünü bilir...");
-        loop(this::tickScenario3);
+        steadyLoop(this::tickScenario3);
     }
 
     private void tickScenario3() {
@@ -413,17 +406,19 @@ public class ScenarioRunner {
             show("Anbarda " + placed + " maneə və hərəkət edən robot peyda oldu — robot hələ görmür, LiDAR-la kəşf edəcək");
             return;
         }
+        // Hərəkət edən robotla üz-üzə: ssenari 2-dəki kimi ikisi də dayanır, V2V ilə razılaşıb davam edirlər
+        if (handleFaceoff()) return;
 
-        // Sensordan yeni məlumat gəlibsə D* Lite yolu yeniləyir; yol dəyişibsə səbəbi bildirilir
+        // LiDAR yeni statik maneə kəşf edibsə D* Lite yolu yeniləyir; yol dəyişibsə səbəbi bildirilir.
+        // Hərəkət edən robota görə isə yol uzaqdan dəyişmir: robot ona çatır, üz-üzə V2V dayanması olur,
+        // yol yalnız növbəti xana bağlı qalanda yenilənir (aşağıda). Bu vaxta qədər onun xanaları
+        // changedCells-də gözləyir və növbəti planlaşdırmada D* Lite-a verilir.
         String event = null;
-        if (!changedCells.isEmpty()) {
+        // planIncremental changedCells-i təmizlədiyi üçün əvvəl yoxlanır
+        boolean staticSeen = changedCells.stream().anyMatch(c -> lidar.isDiscovered(c) && world.isBlocked(c)
+                && world.getObjectAt(c).type != ObjectType.MOVING_ROBOT);
+        if (staticSeen) {
             List<Cell> before = new ArrayList<>(path.subList(robotIndex, path.size()));
-            Cell movingRobot = obstacles.movingRobot();
-            boolean movingRobotSeen = movingRobot != null && lidar.isVisibleNow(movingRobot);
-            // Səbəb: sensor zonasında statik maneə peyda olub (yeni kəşf və ya gözü qarşısında çıxan),
-            // yoxsa hərəkət edən robot yerini dəyişib. planIncremental changedCells-i təmizlədiyi üçün əvvəl yoxlanır
-            boolean staticSeen = changedCells.stream().anyMatch(c -> lidar.isDiscovered(c) && world.isBlocked(c)
-                    && world.getObjectAt(c).type != ObjectType.MOVING_ROBOT);
             List<Cell> updated = planIncremental(robotCell(), pickedUp ? GOAL : BOX_CELL);
             if (updated == null) {
                 endLoop();
@@ -432,11 +427,7 @@ public class ScenarioRunner {
             }
             replan(updated);
             if (!updated.equals(before)) {
-                event = plannerEvent(staticSeen
-                        ? "🧭 D* Lite: LiDAR yeni maneə kəşf etdi — yol yeniləndi"
-                        : movingRobotSeen
-                        ? "🧭 D* Lite: LiDAR hərəkət edən robotu izləyir — yol yeniləndi"
-                        : "🧭 D* Lite: yeni sensor məlumatı — yol yeniləndi");
+                event = plannerEvent("🧭 D* Lite: LiDAR yeni maneə kəşf etdi — yol yeniləndi");
             }
         }
         if (world.isBlocked(nextCell())) {
@@ -455,12 +446,8 @@ public class ScenarioRunner {
         Cell movingRobot = obstacles.movingRobot();
         if (movingRobot != null && movingRobotShownLastFrame) {
             AttentionLevel level = movingRobotNearbyFuzzy(movingRobot);
-            // Robot hərəkət edən robotla üz-üzə (qonşu xanada) dayanır. 2 xana məsafədə STOP gəlsə də robot
+            // Üz-üzə dayanma yuxarıda handleFaceoff-dadır. 2 xana məsafədə STOP gəlsə də robot
             // arada boş xana saxlayıb dayanmır, ehtiyatla yaxınlaşır.
-            if (level.action == STOP && robotCell().distanceTo(movingRobot) == 1) {
-                show("🤖 FUZZY: Hərəkət edən maneə ilə üz-üzə — robot DAYANIR");
-                return;
-            }
             if (level.action != CONTINUE) {
                 cautious = !cautious;
                 if (cautious) {
@@ -473,6 +460,7 @@ public class ScenarioRunner {
         show(event != null ? event
                 : pickedUp ? "LİDAR: Qutu daşıyır... (kəşf: " + lidar.getDiscoveredCells().size() + " xana)"
                 : "LİDAR: Qutuya gedir...");
+        startFaceoffIfAdjacent();
     }
 
     // ==================== SSENARİ 4: yol tam bağlıdır ====================
@@ -609,6 +597,7 @@ public class ScenarioRunner {
         operatorStopTicks = 0;
         pendingObstacles = new ArrayList<>();
         waitTicks = faceoffCooldown = 0;
+        faceoffSettled = false;
         faceoffLeft = -1;
         movingRobotShownLastFrame = false;
         stopAtObstacles.clear();
@@ -621,9 +610,13 @@ public class ScenarioRunner {
         lastPlannerEvent = null;
     }
 
-    /** Hər tick-də əvvəlcə hərəkət edən robot yerini dəyişir, sonra ssenarinin öz məntiqi işləyir. */
+    /**
+     * Hər tick-də əvvəlcə hərəkət edən robot yerini dəyişir, sonra ssenarinin öz məntiqi işləyir.
+     * Fixed delay: tick gecikəndə (məs. buludda zəif CPU) qaçırılan tick-lər ard-arda "borc kimi"
+     * işlədilmir — əks halda robot bir anda bir neçə xana irəli qaçırdı.
+     */
     private void loop(Runnable tick) {
-        loop = executor.scheduleAtFixedRate(safe(() -> {
+        loop = executor.scheduleWithFixedDelay(safe(() -> {
             Cell movingRobotBefore = obstacles.movingRobot();
             obstacles.tick(robotCell());
             Cell movingRobotAfter = obstacles.movingRobot();
@@ -635,7 +628,41 @@ public class ScenarioRunner {
         }), STEP_INTERVAL_MS, STEP_INTERVAL_MS, TimeUnit.MILLISECONDS);
     }
 
+    /**
+     * Ssenari 3 üçün {@link #loop}: tick-lər sabit tempdə (hər STEP_INTERVAL_MS-də) başlayır. Ssenari 3-ün
+     * tick-i ağırdır (LiDAR + D* Lite + A*) və fixed delay-də bu hesablama vaxtı hər addıma əlavə olunub
+     * robotu ssenari 1-2-dən yavaş edirdi. Gecikmə olanda qaçırılan tick-lər yenə ard-arda işlədilmir.
+     */
+    private void steadyLoop(Runnable tick) {
+        loopTick = tick;
+        nextTickAt = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(STEP_INTERVAL_MS);
+        scheduleNextTick();
+    }
+
+    private void scheduleNextTick() {
+        long delay = Math.max(0, nextTickAt - System.nanoTime());
+        loop = executor.schedule(safe(this::runTick), delay, TimeUnit.NANOSECONDS);
+    }
+
+    private void runTick() {
+        Runnable tick = loopTick;
+        if (tick == null) return;
+        Cell movingRobotBefore = obstacles.movingRobot();
+        obstacles.tick(robotCell());
+        Cell movingRobotAfter = obstacles.movingRobot();
+        // Hərəkət edən robotun köhnə və yeni xanası D* Lite üçün "dəyişən xana"dır. Yeni xana hər tick
+        // əlavə olunur: LiDAR rejimində onun görünüb-görünməməsi robot hərəkət etdikcə də dəyişir
+        if (movingRobotBefore != null) changedCells.add(movingRobotBefore);
+        if (movingRobotAfter != null) changedCells.add(movingRobotAfter);
+        tick.run();
+        if (loopTick != tick) return;   // tick dövrü bitirdi
+        // Növbəti tick əvvəlkinin planlı vaxtından STEP_INTERVAL_MS sonra; gecikmə olubsa borc yığılmır
+        nextTickAt = Math.max(nextTickAt + TimeUnit.MILLISECONDS.toNanos(STEP_INTERVAL_MS), System.nanoTime());
+        scheduleNextTick();
+    }
+
     private void endLoop() {
+        loopTick = null;
         loop.cancel(false);
     }
 
@@ -650,6 +677,7 @@ public class ScenarioRunner {
                 action.run();
             } catch (RuntimeException e) {
                 e.printStackTrace();
+                loopTick = null;
                 if (loop != null) loop.cancel(false);
             }
         };

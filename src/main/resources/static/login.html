@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="az">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Giriş — Anbar Robotu</title>
+    <style>
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: #e6ddd0;
+            font-family: 'Segoe UI', sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+            box-sizing: border-box;
+        }
+        form {
+            background: #f4efe6;
+            border: 3px solid #5a5040;
+            border-radius: 6px;
+            padding: 28px 32px;
+            width: 100%;
+            max-width: 320px;
+            box-sizing: border-box;
+        }
+        h1 {
+            color: #3a3226;
+            font-size: 20px;
+            margin: 0 0 4px;
+        }
+        p.sub {
+            color: #888;
+            font-size: 13px;
+            margin: 0 0 20px;
+        }
+        label {
+            display: block;
+            font-size: 13px;
+            color: #2c2416;
+            margin-bottom: 4px;
+        }
+        input {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 9px 10px;
+            font-size: 15px;
+            border: 1px solid #b8ad98;
+            border-radius: 4px;
+            margin-bottom: 14px;
+            background: #fff;
+        }
+        button {
+            width: 100%;
+            padding: 10px;
+            font-size: 15px;
+            background: #2980b9;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover { background: #1f6da0; }
+        button:disabled { background: #8aa9bf; cursor: default; }
+        #msg {
+            font-size: 13px;
+            color: #c81e1e;
+            margin-bottom: 14px;
+        }
+        #msg:empty { display: none; }
+    </style>
+</head>
+<body>
+<form id="login">
+    <h1>🤖 Anbar Robotu</h1>
+    <p class="sub">Simulyasiyaya baxmaq üçün daxil olun</p>
+    <div id="msg"></div>
+    <label for="username">İstifadəçi adı</label>
+    <input type="text" id="username" autocomplete="username" required autofocus>
+    <label for="password">Parol</label>
+    <input type="password" id="password" autocomplete="current-password" required>
+    <button type="submit" id="submit">Daxil ol</button>
+</form>
+
+<script>
+// Ünvanlar nisbidir ("api/auth/login", "./"): həm lokalda (/robot-path-planning/), həm serverdə (/) işləyir
+const msg = document.getElementById('msg');
+const submit = document.getElementById('submit');
+
+document.getElementById('login').addEventListener('submit', (e) => {
+    e.preventDefault();
+    msg.textContent = '';
+    submit.disabled = true;
+    fetch('api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            username: document.getElementById('username').value,
+            password: document.getElementById('password').value
+        })
+    }).then(r => {
+        if (r.status === 401) throw new Error('İstifadəçi adı və ya parol səhvdir.');
+        if (!r.ok) throw new Error('Server xətası (' + r.status + '). Yenidən cəhd edin.');
+        return r.json();
+    }).then(res => {
+        // Yalnız index.html-ə ötürmək üçün: o, tokeni götürən kimi buradan silir (hər açılışda giriş tələb olunsun)
+        sessionStorage.setItem('accessToken', res.accessToken);
+        location.replace('./');
+    }).catch(err => {
+        msg.textContent = err.message === 'Failed to fetch' ? 'Serverlə əlaqə yoxdur.' : err.message;
+        submit.disabled = false;
+    });
+});
+</script>
+</body>
+</html>

@@ -62,9 +62,10 @@
     </style>
 </head>
 <body>
-    <h1>Anbar Robotu — A* / D* Lite Yol Tapma Simulyasiyası <small style="font-size:11px;color:#888">v10 · standart paket/sinif adları</small></h1>
+    <button onclick="logout()" style="position:absolute;top:12px;right:16px;margin:0;padding:6px 14px;font-size:13px;background:#7a6e5a">Çıxış</button>
+    <h1>Anbar Robotu — A* / D* Lite Yol Tapma Simulyasiyası <small style="font-size:11px;color:#888">v16 · hər açılışda giriş tələb olunur</small></h1>
     <canvas id="grid" width="720" height="640"></canvas>
-    <div id="status">Başlatmaq üçün düyməyə basın</div>
+    <div id="status">Simulyasiya yüklənir...</div>
     <div id="fuzzy"></div>
     <div id="planner"></div>
     <button onclick="startSimulation()">Başlat</button>
@@ -80,22 +81,66 @@ const connEl = document.getElementById('connection');
 
 let ws;
 let state = null;
+let lastMessageAt = 0;   // serverdən son vəziyyətin gəldiyi an (0 = bu qoşulmada hələ gəlməyib)
 const CELL = 55;
 const MARGIN = 30;
 
+// ==================== Giriş (JWT) ====================
+// Token login.html-dən sessionStorage ilə ötürülür və dərhal oradan silinir — yalnız bu səhifənin
+// yaddaşında qalır. Ona görə səhifə hər açılanda/yenilənəndə istifadəçi adı və parol yenidən soruşulur.
+// Yoxdursa və ya vaxtı keçibsə giriş səhifəsinə qayıdılır. Server də hər API/WebSocket sorğusunda
+// tokeni yoxlayır — buradakı yoxlama yalnız istifadəçi rahatlığı üçündür.
+const accessToken = sessionStorage.getItem('accessToken');
+sessionStorage.removeItem('accessToken');
+localStorage.removeItem('accessToken');   // v15-dən qalmış köhnə token
+
+function getToken() {
+    const token = accessToken;
+    if (!token) return null;
+    try {
+        const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+        return payload.exp * 1000 > Date.now() ? token : null;
+    } catch (e) {
+        return null;
+    }
+}
+
+function goLogin() {
+    location.replace(location.pathname.replace(/\/+$/, '') + '/login.html');
+}
+
+function logout() {
+    // Sessiya yoxdur (stateless) — token yalnız bu səhifənin yaddaşındadır, səhifədən çıxmaq kifayətdir
+    goLogin();
+}
+
+if (!getToken()) goLogin();
+
 function connectWS() {
+    const token = getToken();
+    if (!token) { goLogin(); return; }
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     const basePath = location.pathname.replace(/\/+$/, '');
-    ws = new WebSocket(proto + '//' + location.host + basePath + '/ws/robot');
+    // Brauzerin WebSocket API-si Authorization başlığı göndərə bilmir — token ünvanda ötürülür
+    ws = new WebSocket(proto + '//' + location.host + basePath + '/ws/robot?token=' + encodeURIComponent(token));
+    lastMessageAt = 0;
 
     ws.onopen = () => {
         // "bağlı" həm "qoşulub", həm də "qapalı" kimi oxunur — ona görə birmənalı yazılır
         connEl.textContent = '🟢 Serverə qoşulub (WebSocket aktivdir)';
         connEl.style.color = '#27ae60';
+        // Səhifə açılan kimi robot görünsün: simulyasiya artıq gedirsə server hər tick vəziyyət göndərir
+        // və biz ona sadəcə qoşuluruq (başqa baxanlar üçün yenidən başlamır). 1.5 san ərzində heç nə
+        // gəlməyibsə simulyasiya ya başlamayıb, ya da bitib — onda avtomatik başladılır.
+        const socket = ws;
+        setTimeout(() => {
+            if (ws === socket && ws.readyState === WebSocket.OPEN && !lastMessageAt) startSimulation();
+        }, 1500);
     };
 
     ws.onmessage = (e) => {
         state = JSON.parse(e.data);
+        lastMessageAt = Date.now();
         onRobotState(state);
         statusEl.textContent = state.status;
         if (state.fuzzyInfo) {
@@ -136,7 +181,12 @@ function plannerText(p) {
 
 function startSimulation() {
     const basePath = location.pathname.replace(/\/+$/, '');
-    fetch(basePath + '/api/start').then(r => r.json()).then(() => {
+    const token = getToken();
+    if (!token) { goLogin(); return; }
+    fetch(basePath + '/api/start', { headers: { 'Authorization': 'Bearer ' + token } }).then(r => {
+        if (r.status === 401) { goLogin(); throw new Error('giriş tələb olunur'); }
+        return r.json();
+    }).then(() => {
         statusEl.textContent = 'Simulyasiya başladı...';
     });
 }
@@ -151,7 +201,8 @@ function createMover() {
         x: null, y: null,           // ekrandakı mövqe (xana vahidində: col, row); null = ekranda yoxdur
         fromX: 0, fromY: 0,
         toX: 0, toY: 0,
-        start: 0, duration: 500,
+        start: 0, duration: 500, stepMs: 500,
+        queue: [],                  // gəlib, hələ oynadılmamış xanalar (şəbəkə bir neçə vəziyyəti birdən gətirəndə)
         heading: -Math.PI / 2,      // baxdığı istiqamət (radian), əvvəlcə yuxarı
         targetHeading: -Math.PI / 2,
         lastFrame: 0
@@ -170,23 +221,41 @@ function onRobotState(s) {
     else mover.x = null;        // hələ çıxmayıb və ya LiDAR onu görmür
 }
 
+/**
+ * Robotu yeni xanaya aparır. Server addımları hər stepMs-də bir göndərir, amma buludda (zəif CPU,
+ * şəbəkə) iki addım brauzerə eyni anda gələ bilir. Onda ikinci addım dərhal oynadılsaydı robot iki
+ * xananı bir addımın vaxtında keçib "qaçardı". Ona görə addımlar növbəyə düşür və hər biri öz
+ * vaxtında oynadılır: robot bütün ssenarilərdə eyni sürətlə gedir.
+ */
 function moveTo(a, tx, ty, stepMs) {
-    if (a.x === null || Math.abs(tx - a.x) + Math.abs(ty - a.y) > 1.5) {
+    const last = a.queue.length ? a.queue[a.queue.length - 1] : {x: a.toX, y: a.toY};
+    if (a.x === null || Math.abs(tx - last.x) + Math.abs(ty - last.y) > 1.5) {
         // İlk vəziyyət və ya yeni ssenari ("teleport"): sürüşdürmə yoxdur
         a.x = a.fromX = a.toX = tx;
         a.y = a.fromY = a.toY = ty;
         a.start = 0;
+        a.queue = [];
         return;
     }
-    if (tx === a.toX && ty === a.toY) return;   // eyni xana (gözləmə və ya status yeniləməsi)
+    if (tx === last.x && ty === last.y) return;   // eyni xana (gözləmə və ya status yeniləməsi)
 
+    a.stepMs = stepMs || 500;
+    if (a.start) {
+        a.queue.push({x: tx, y: ty});   // əvvəlki addım hələ bitməyib — növbəyə
+        return;
+    }
+    startMove(a, tx, ty, performance.now());
+}
+
+function startMove(a, tx, ty, now, catchUp) {
     a.fromX = a.x;
     a.fromY = a.y;
     a.toX = tx;
     a.toY = ty;
-    a.start = performance.now();
-    // Bir az qısa müddət: növbəti tick gələnə qədər xananın mərkəzinə çatmış olsun
-    a.duration = (stepMs || 500) * 0.9;
+    a.start = now;
+    // Bir az qısa müddət: növbəti tick gələnə qədər xananın mərkəzinə çatmış olsun.
+    // Növbədən gələn addım bir az tez oynadılır ki, gecikmə yığılıb qalmasın (sıçrayış olmadan).
+    a.duration = a.stepMs * (catchUp ? 0.7 : 0.9);
     a.targetHeading = headingFor(tx - a.fromX, ty - a.fromY);
 }
 
@@ -210,7 +279,11 @@ function updateAnim(a, now) {
         const t = Math.max(0, Math.min((now - a.start) / a.duration, 1));
         a.x = a.fromX + (a.toX - a.fromX) * t;
         a.y = a.fromY + (a.toY - a.fromY) * t;
-        if (t >= 1) a.start = 0;
+        if (t >= 1) {
+            a.start = 0;
+            const next = a.queue.shift();
+            if (next) startMove(a, next.x, next.y, now, true);
+        }
     }
 
     // Eksponensial yaxınlaşma: döngədə 90° birdən yox, yumşaq dönür. Bucaqlar [-180°, 0°]
