@@ -3,7 +3,7 @@ package com.example.robotpathplanning.security;
 import com.example.robotpathplanning.security.captcha.CaptchaException;
 import com.example.robotpathplanning.security.captcha.CaptchaProperties;
 import com.example.robotpathplanning.security.captcha.CaptchaVerifier;
-import com.example.robotpathplanning.security.captcha.TurnstileVerifier;
+import com.example.robotpathplanning.security.captcha.SiteVerifyCaptchaVerifier;
 import com.example.robotpathplanning.security.dto.JwtRequest;
 import com.example.robotpathplanning.security.dto.JwtResponse;
 import jakarta.servlet.http.HttpServletRequest;
@@ -16,9 +16,11 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.Locale;
+
 /**
  * GET  /api/auth/captcha - login səhifəsi CAPTCHA vidcetini qurmaq üçün açıq parametrləri alır
- *                          {"enabled": true, "provider": "turnstile", "siteKey": "...", "action": "login"}
+ *                          {"enabled": true, "provider": "recaptcha", "siteKey": "...", "action": "login"}
  *
  * POST /api/auth/login
  * sorğu: {"username": "admin", "password": "...", "captchaToken": "..."}
@@ -45,7 +47,8 @@ public class AuthController {
     @GetMapping("/api/auth/captcha")
     public CaptchaConfigResponse captchaConfig() {
         return captcha.enabled()
-                ? new CaptchaConfigResponse(true, "turnstile", captcha.siteKey(), TurnstileVerifier.LOGIN_ACTION)
+                ? new CaptchaConfigResponse(true, captcha.provider().name().toLowerCase(Locale.ROOT), captcha.siteKey(),
+                        SiteVerifyCaptchaVerifier.LOGIN_ACTION)
                 : new CaptchaConfigResponse(false, null, null, null);
     }
 

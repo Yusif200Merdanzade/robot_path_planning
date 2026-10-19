@@ -26,7 +26,7 @@
             box-sizing: border-box;
         }
         #captcha {
-            min-height: 65px;   /* vidcet yüklənənə qədər forma "tullanmasın" */
+            min-height: 78px;   /* vidcet (reCAPTCHA 304×78) yüklənənə qədər forma "tullanmasın" */
             margin-bottom: 14px;
         }
         #captcha:empty { display: none; }
@@ -108,31 +108,46 @@ function updateSubmit() {
     submit.disabled = state.sending || state.blocked || (state.captchaRequired && !state.captchaToken);
 }
 
-// ==================== CAPTCHA (Cloudflare Turnstile) ====================
-// Açıq parametrləri serverdən alır, Cloudflare skriptini yükləyir və vidceti qurur.
+// ==================== CAPTCHA ====================
+// Provayderi və açıq açarı serverdən alır (GET api/auth/captcha), skripti yükləyir, vidceti qurur.
 // Token birdəfəlikdir: hər göndərişdən sonra (uğursuz olsa belə) vidcet yenilənir.
+// Provayderə xas olan yalnız bu adapterlərdir — qalan məntiq hamısı üçün eynidir.
+const CAPTCHA_ADAPTERS = {
+    // Google reCAPTCHA v2: "Mən robot deyiləm" qutusu, istifadəçi həmişə klik edir
+    recaptcha: {
+        scriptUrl: 'https://www.google.com/recaptcha/api.js?render=explicit&hl=az&onload=onCaptchaLoad',
+        render: (config, handlers) => grecaptcha.render('captcha', { sitekey: config.siteKey, ...handlers }),
+        reset: id => grecaptcha.reset(id)
+    },
+    // Cloudflare Turnstile: çox vaxt kliksiz keçir
+    turnstile: {
+        scriptUrl: 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=onCaptchaLoad',
+        render: (config, handlers) => turnstile.render('#captcha',
+            { sitekey: config.siteKey, action: config.action, size: 'flexible', ...handlers }),
+        reset: id => turnstile.reset(id)
+    }
+};
+let captchaAdapter = null;
+
 function initCaptcha() {
     fetch('api/auth/captcha').then(r => r.json()).then(config => {
         state.captchaRequired = config.enabled;
         updateSubmit();
         if (!config.enabled) return;
-        window.onTurnstileLoad = () => {
-            widgetId = turnstile.render('#captcha', {
-                sitekey: config.siteKey,
-                action: config.action,
-                size: 'flexible',
-                callback: token => { state.captchaToken = token; updateSubmit(); },
-                'expired-callback': () => { state.captchaToken = null; updateSubmit(); },
-                // Həm yoxlama keçilməyəndə (bot şübhəsi), həm vidcet yüklənməyəndə çağırılır
-                'error-callback': () => {
-                    state.captchaToken = null;
-                    updateSubmit();
-                    msg.textContent = 'Robot yoxlaması keçilmədi. Səhifəni yeniləyib yenidən cəhd edin.';
-                }
-            });
+        captchaAdapter = CAPTCHA_ADAPTERS[config.provider];
+        const handlers = {
+            callback: token => { state.captchaToken = token; updateSubmit(); },
+            'expired-callback': () => { state.captchaToken = null; updateSubmit(); },
+            // Həm yoxlama keçilməyəndə (bot şübhəsi), həm vidcet yüklənməyəndə çağırılır
+            'error-callback': () => {
+                state.captchaToken = null;
+                updateSubmit();
+                msg.textContent = 'Robot yoxlaması keçilmədi. Səhifəni yeniləyib yenidən cəhd edin.';
+            }
         };
+        window.onCaptchaLoad = () => { widgetId = captchaAdapter.render(config, handlers); };
         const script = document.createElement('script');
-        script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=onTurnstileLoad';
+        script.src = captchaAdapter.scriptUrl;
         script.async = true;
         script.onerror = () => msg.textContent = 'Robot yoxlaması yüklənmədi. İnternet əlaqəsini yoxlayın.';
         document.head.appendChild(script);
@@ -141,7 +156,7 @@ function initCaptcha() {
 
 function resetCaptcha() {
     state.captchaToken = null;
-    if (widgetId !== null) turnstile.reset(widgetId);
+    if (widgetId !== null) captchaAdapter.reset(widgetId);
 }
 
 // ==================== Rate limit ====================

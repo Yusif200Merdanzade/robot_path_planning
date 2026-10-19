@@ -10,7 +10,7 @@ import org.springframework.web.client.RestClient;
 import java.net.http.HttpClient;
 
 /**
- * CAPTCHA provayderini seçir. Başqa provayderə (reCAPTCHA, hCaptcha) keçid yalnız bu metodu dəyişir.
+ * CAPTCHA yoxlayıcısını qurur. Provayder (reCAPTCHA / Turnstile) app.captcha.provider ilə seçilir.
  */
 @Configuration
 @EnableConfigurationProperties(CaptchaProperties.class)
@@ -22,10 +22,10 @@ public class CaptchaConfig {
             LoggerFactory.getLogger(CaptchaConfig.class).warn("CAPTCHA söndürülüb (app.captcha.enabled=false) — login yalnız parol və rate limit ilə qorunur");
             return (token, clientIp) -> CaptchaVerifier.Result.PASSED;
         }
-        // Timeout məcburidir: Cloudflare ilişsə, login sorğuları da sonsuz gözləməsin
+        // Timeout məcburidir: provayder ilişsə, login sorğuları da sonsuz gözləməsin
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(
                 HttpClient.newBuilder().connectTimeout(properties.timeout()).build());
         requestFactory.setReadTimeout(properties.timeout());
-        return new TurnstileVerifier(properties, RestClient.builder().requestFactory(requestFactory).build());
+        return new SiteVerifyCaptchaVerifier(properties, RestClient.builder().requestFactory(requestFactory).build());
     }
 }
