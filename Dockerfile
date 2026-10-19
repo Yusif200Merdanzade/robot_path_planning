@@ -9,7 +9,11 @@ RUN mvn -q package -DskipTests
 # 2-ci mərhələ: yalnız JRE və hazır jar — kiçik və təhlükəsiz image
 FROM eclipse-temurin:21-jre
 WORKDIR /app
-COPY --from=build /app/target/*.jar app.jar
+# Proqram root yox, imtiyazsız istifadəçi ilə işləyir: proqramda zəiflik tapılsa belə,
+# hücumçu konteynerin içində sistem fayllarını dəyişə, paket quraşdıra bilməz
+RUN groupadd --system app && useradd --system --gid app --no-create-home --shell /usr/sbin/nologin app
+COPY --from=build --chown=app:app /app/target/*.jar app.jar
+USER app
 ENV SPRING_PROFILES_ACTIVE=prod
 EXPOSE 8088
 ENTRYPOINT ["java", "-jar", "app.jar"]
