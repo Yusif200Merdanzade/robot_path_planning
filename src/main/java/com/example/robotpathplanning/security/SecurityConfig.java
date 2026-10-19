@@ -42,8 +42,8 @@ public class SecurityConfig {
     /** Vedrələr proses yaddaşında saxlanır (Redis-ə keçid yalnız bu metodu dəyişir — bax: RateLimiter). */
     @Bean
     public RateLimiter rateLimiter(RateLimitProperties rateLimits) {
-        return new RateLimiter(rateLimits,
-                RateLimiter.inMemoryBuckets(rateLimits.maxTrackedClients(), TimeMeter.SYSTEM_MILLISECONDS));
+        TimeMeter clock = TimeMeter.SYSTEM_MILLISECONDS;
+        return new RateLimiter(rateLimits, RateLimiter.inMemoryBuckets(rateLimits.maxTrackedClients(), clock), clock);
     }
 
     @Bean
