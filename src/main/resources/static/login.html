@@ -123,10 +123,11 @@ function initCaptcha() {
                 size: 'flexible',
                 callback: token => { state.captchaToken = token; updateSubmit(); },
                 'expired-callback': () => { state.captchaToken = null; updateSubmit(); },
+                // Həm yoxlama keçilməyəndə (bot şübhəsi), həm vidcet yüklənməyəndə çağırılır
                 'error-callback': () => {
                     state.captchaToken = null;
                     updateSubmit();
-                    msg.textContent = 'Robot yoxlaması yüklənmədi. Səhifəni yeniləyin.';
+                    msg.textContent = 'Robot yoxlaması keçilmədi. Səhifəni yeniləyib yenidən cəhd edin.';
                 }
             });
         };
