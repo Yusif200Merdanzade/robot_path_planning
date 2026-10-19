@@ -15,13 +15,18 @@ import org.springframework.web.util.pattern.PathPatternParser;
 import java.time.Duration;
 import java.util.List;
 import java.util.OptionalLong;
+import java.util.stream.IntStream;
 
 /**
  * Sorğu limitinin qərarı: "bu klient bu sorğunu indi edə bilərmi?". HTTP-dən asılı deyil.
  *
- * Alqoritm token bucket-dir (Bucket4j): hər (qayda, klient) cütü üçün bir vedrə; hər sorğu bir jeton
- * aparır, period bitəndə vedrə yenidən tam dolur. Qaydada bir neçə limit ola bilər
- * (məs. dəqiqədə 5 VƏ saatda 20): qısa partlayışı da, uzunmüddətli yavaş hücumu da tutur.
+ * Alqoritm token bucket-dir (Bucket4j): hər (qayda, limit, klient) üçün bir vedrə; hər sorğu bir jeton
+ * aparır. Qaydada bir neçə limit ola bilər (məs. 5 san-da 5 VƏ saatda 20): qısa partlayışı da,
+ * uzunmüddətli yavaş hücumu da tutur.
+ *
+ * Klient üçün davranış (girişdə də, "Başlat"da da eyni):
+ *   capacity qədər sorğu keçir -> növbəti rədd olunur və düz period qədər blok -> blok bitəndə
+ *   yenə capacity qədər sorğu (pəncərə blokdan sonrakı ilk sorğudan sayılır).
  *
  * Sorğuya uyğun gələn bütün qaydalar ardıcıl yoxlanır (məs. həm "login", həm ümumi "api" qaydası).
  * Biri rədd edən kimi dayanılır; əvvəlki qaydalardan götürülmüş jeton geri qaytarılmır —
@@ -39,7 +44,7 @@ public class RateLimiter {
     private final List<CompiledRule> rules;
     private final ProxyManager<String> buckets;
     private final TimeMeter clock;
-    // Bloklanmış klientlər: "qayda|klient" -> blokun bitdiyi an (nanosaniyə). Bax: tryConsume
+    // Bloklanmış limitlər: "qayda|limit|klient" -> blokun bitdiyi an (nanosaniyə). Bax: tryConsume
     private final Cache<String, Long> blockedUntil;
 
     public RateLimiter(RateLimitProperties properties, ProxyManager<String> buckets, TimeMeter clock) {
@@ -47,9 +52,12 @@ public class RateLimiter {
         this.rules = properties.rules().stream().map(rule -> new CompiledRule(rule, parser)).toList();
         this.buckets = buckets;
         this.clock = clock;
+        // Ən uzun period qədər saxlanır: blok heç vaxt ondan uzun sürmür
+        Duration longestPeriod = rules.stream().flatMap(rule -> rule.limits.stream()).map(limit -> limit.period)
+                .max(Duration::compareTo).orElse(Duration.ofMinutes(1));
         this.blockedUntil = Caffeine.newBuilder()
                 .maximumSize(properties.maxTrackedClients())
-                .expireAfterWrite(rules.stream().map(rule -> rule.minPeriod).max(Duration::compareTo).orElse(Duration.ZERO))
+                .expireAfterWrite(longestPeriod)
                 .build();
     }
 
@@ -80,39 +88,44 @@ public class RateLimiter {
      */
     public Decision tryConsume(String method, String path, String clientKey) {
         PathContainer pathContainer = PathContainer.parsePath(path);
+        long now = clock.currentTimeNanos();
         long minRemaining = Long.MAX_VALUE;
         boolean matched = false;
 
         for (CompiledRule rule : rules) {
             if (!rule.matches(method, pathContainer)) continue;
             matched = true;
-            String key = rule.name + "|" + clientKey;
-            long now = clock.currentTimeNanos();
 
-            // Blok müddəti bitməyibsə jeton belə yoxlanmır
-            Long until = blockedUntil.getIfPresent(key);
-            if (until != null && until > now) {
-                return Decision.rejected(rule.name, Duration.ofNanos(until - now));
-            }
+            // Hər limitin öz vedrəsi var (məs. "login|0|ip" — 5 san, "login|1|ip" — 1 saat):
+            // qısa limitin bloku bitəndə yalnız o sıfırlanır, saatlıq sayğac toxunulmaz qalır
+            for (CompiledLimit limit : rule.limits) {
+                String key = rule.name + "|" + limit.index + "|" + clientKey;
 
-            ConsumptionProbe probe = buckets.builder()
-                    .build(key, () -> rule.bucketConfiguration)
-                    .tryConsumeAndReturnRemaining(1);
-            if (!probe.isConsumed()) {
-                // Vedrə pəncərəsi ilk cəhddə başlayır, ona görə növbəti doldurmaya qalan vaxt 0..period arası
-                // təsadüfi olur (5 san limitdə: 5, 3, 1...). Klient isə blok anından ən azı tam period
-                // gözləməlidir. Uzun limit (saatda 20) rədd edibsə, onun gözləməsi onsuz da daha uzundur.
-                Duration wait = max(Duration.ofNanos(probe.getNanosToWaitForRefill()), rule.minPeriod);
-                blockedUntil.put(key, now + wait.toNanos());
-                return Decision.rejected(rule.name, wait);
+                Long until = blockedUntil.getIfPresent(key);
+                if (until != null && until > now) {
+                    return Decision.rejected(rule.name, Duration.ofNanos(until - now));   // blok davam edir
+                }
+                if (until != null) {
+                    // Blok bitib: limit təzə vedrə ilə başlayır, pəncərə bu sorğudan sayılır. Əks halda köhnə
+                    // pəncərənin sərhədi blokdan bir neçə saniyə sonra gəlir və cəhdlər ikinci dəfə dolurdu
+                    // (4 əvəzinə 8 basış keçirdi).
+                    buckets.removeProxy(key);
+                    blockedUntil.invalidate(key);
+                }
+
+                ConsumptionProbe probe = buckets.builder()
+                        .build(key, () -> limit.bucketConfiguration)
+                        .tryConsumeAndReturnRemaining(1);
+                if (!probe.isConsumed()) {
+                    // Blok rədd anından düz period sürür (5 san limitdə həmişə 5 san). Pəncərənin qalan hissəsi
+                    // (5, 3, 1... — pəncərə ilk sorğuda başladığı üçün təsadüfi) əsas götürülmür.
+                    blockedUntil.put(key, now + limit.period.toNanos());
+                    return Decision.rejected(rule.name, limit.period);
+                }
+                minRemaining = Math.min(minRemaining, probe.getRemainingTokens());
             }
-            minRemaining = Math.min(minRemaining, probe.getRemainingTokens());
         }
         return matched ? Decision.allowed(minRemaining) : Decision.notLimited();
-    }
-
-    private static Duration max(Duration a, Duration b) {
-        return a.compareTo(b) >= 0 ? a : b;
     }
 
     /**
@@ -142,34 +155,43 @@ public class RateLimiter {
         }
     }
 
-    /** Qayda başlanğıcda bir dəfə hazırlanır: yol şablonu parse olunur, vedrə konfiqurasiyası qurulur. */
+    /** Qayda başlanğıcda bir dəfə hazırlanır: yol şablonu parse olunur, hər limitin vedrə konfiqurasiyası qurulur. */
     private static final class CompiledRule {
 
         final String name;
         final String method;
         final PathPattern pattern;
-        final BucketConfiguration bucketConfiguration;
-        final Duration minPeriod;   // blokun minimum müddəti (ən qısa limitin pəncərəsi)
+        final List<CompiledLimit> limits;
 
         CompiledRule(RateLimitProperties.Rule rule, PathPatternParser parser) {
             this.name = rule.name();
             this.method = rule.method();
             this.pattern = parser.parse(rule.path());
-            var builder = BucketConfiguration.builder();
-            for (RateLimitProperties.Limit limit : rule.limits()) {
-                // intervally: jetonlar period bitəndə hamısı birdən qayıdır. Limitə düşən klient period
-                // bitənə qədər tam gözləyir, sonra bütün cəhdləri geri alır ("47 san sonra yenidən yoxlayın").
-                // greedy (hər 12 san bir jeton) bloku "1 cəhd — yenə blok" növbələşməsinə çevirirdi.
-                // Qiyməti: pəncərə sərhədində qısa müddətə 2×capacity mümkündür — uzun limit (saatda 20) bunu tutur.
-                builder.addLimit(l -> l.capacity(limit.capacity()).refillIntervally(limit.capacity(), limit.period()));
-            }
-            this.bucketConfiguration = builder.build();
-            this.minPeriod = rule.limits().stream().map(RateLimitProperties.Limit::period)
-                    .min(Duration::compareTo).orElseThrow();
+            this.limits = IntStream.range(0, rule.limits().size())
+                    .mapToObj(i -> new CompiledLimit(i, rule.limits().get(i)))
+                    .toList();
         }
 
         boolean matches(String requestMethod, PathContainer path) {
             return (method == null || method.equalsIgnoreCase(requestMethod)) && pattern.matches(path);
+        }
+    }
+
+    /** Bir limit (məs. "5 cəhd / 5 san") və onun vedrə konfiqurasiyası. */
+    private static final class CompiledLimit {
+
+        final int index;
+        final Duration period;
+        final BucketConfiguration bucketConfiguration;
+
+        CompiledLimit(int index, RateLimitProperties.Limit limit) {
+            this.index = index;
+            this.period = limit.period();
+            // intervally: jetonlar period bitəndə hamısı birdən qayıdır (greedy kimi hər 1 san bir jeton yox).
+            // Blokla birlikdə nəticə: capacity qədər cəhd -> düz period blok -> yenə capacity qədər cəhd.
+            this.bucketConfiguration = BucketConfiguration.builder()
+                    .addLimit(l -> l.capacity(limit.capacity()).refillIntervally(limit.capacity(), limit.period()))
+                    .build();
         }
     }
 }

@@ -63,12 +63,12 @@
 </head>
 <body>
     <button onclick="logout()" style="position:absolute;top:12px;right:16px;margin:0;padding:6px 14px;font-size:13px;background:#7a6e5a">Çıxış</button>
-    <h1>Anbar Robotu — A* / D* Lite Yol Tapma Simulyasiyası <small style="font-size:11px;color:#888">v18 · limitdə geri sayım, cəhdlər birdəfəlik qayıdır</small></h1>
+    <h1>Anbar Robotu — A* / D* Lite Yol Tapma Simulyasiyası <small style="font-size:11px;color:#888">v19 · "Başlat": 4 basışdan sonra 5 san gözləmə</small></h1>
     <canvas id="grid" width="720" height="640"></canvas>
     <div id="status">Simulyasiya yüklənir...</div>
     <div id="fuzzy"></div>
     <div id="planner"></div>
-    <button onclick="startSimulation()">Başlat</button>
+    <button id="startBtn" onclick="startSimulation()">Başlat</button>
     <div id="connection">Bağlantı gözlənilir...</div>
 
 <script>
@@ -179,6 +179,29 @@ function plannerText(p) {
     return p.event ? p.event + '\n' + text : text;
 }
 
+// Limiti server müəyyən edir (app.rate-limit start qaydası: 4 basış, sonra 5 san blok — girişdəki kimi).
+// Limitə düşəndə düymə server dediyi qədər (Retry-After) bağlanır.
+const startBtn = document.getElementById('startBtn');
+let startCountdown = null;
+
+/** Düyməni bağlayır və üstündə geri sayım göstərir: "Başlat (5)", "(4)"... vaxt bitəndə özü açılır. */
+function lockStartButton(seconds) {
+    clearInterval(startCountdown);
+    let left = seconds;
+    startBtn.disabled = true;
+    startBtn.textContent = 'Başlat (' + left + ')';
+    startCountdown = setInterval(() => {
+        left--;
+        if (left > 0) {
+            startBtn.textContent = 'Başlat (' + left + ')';
+            return;
+        }
+        clearInterval(startCountdown);
+        startBtn.textContent = 'Başlat';
+        startBtn.disabled = false;
+    }, 1000);
+}
+
 function startSimulation() {
     const basePath = location.pathname.replace(/\/+$/, '');
     const token = getToken();
@@ -186,8 +209,9 @@ function startSimulation() {
     fetch(basePath + '/api/start', { headers: { 'Authorization': 'Bearer ' + token } }).then(r => {
         if (r.status === 401) { goLogin(); throw new Error('giriş tələb olunur'); }
         if (r.status === 429) {
-            throw new Error('Simulyasiya çox tez-tez başladılır. '
-                + (r.headers.get('Retry-After') || '60') + ' saniyə sonra yenidən cəhd edin.');
+            const seconds = parseInt(r.headers.get('Retry-After'), 10) || 5;
+            lockStartButton(seconds);
+            throw new Error('Çox tez-tez başladılır. ' + seconds + ' saniyə sonra yenidən başlada bilərsiniz.');
         }
         return r.json();
     }).then(() => {
