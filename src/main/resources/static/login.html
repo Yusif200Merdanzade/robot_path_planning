@@ -87,6 +87,23 @@
 // Ünvanlar nisbidir ("api/auth/login", "./"): həm lokalda (/robot-path-planning/), həm serverdə (/) işləyir
 const msg = document.getElementById('msg');
 const submit = document.getElementById('submit');
+let countdown = null;
+
+/** Limitə düşəndə: düymə bağlanır, mesajda saniyələr canlı azalır, vaxt bitəndə düymə özü açılır. */
+function blockFor(seconds) {
+    clearInterval(countdown);
+    submit.disabled = true;
+    let left = seconds;
+    const render = () => msg.textContent = 'Çox cəhd etdiniz. ' + left + ' saniyə sonra yenidən yoxlayın.';
+    render();
+    countdown = setInterval(() => {
+        left--;
+        if (left > 0) return render();
+        clearInterval(countdown);
+        msg.textContent = '';
+        submit.disabled = false;
+    }, 1000);
+}
 
 document.getElementById('login').addEventListener('submit', (e) => {
     e.preventDefault();
@@ -102,8 +119,9 @@ document.getElementById('login').addEventListener('submit', (e) => {
     }).then(r => {
         if (r.status === 401) throw new Error('İstifadəçi adı və ya parol səhvdir.');
         if (r.status === 429) {
-            const seconds = r.headers.get('Retry-After') || '60';
-            throw new Error('Çox cəhd etdiniz. ' + seconds + ' saniyə sonra yenidən yoxlayın.');
+            const error = new Error('rate-limited');
+            error.retryAfter = parseInt(r.headers.get('Retry-After'), 10) || 60;
+            throw error;
         }
         if (!r.ok) throw new Error('Server xətası (' + r.status + '). Yenidən cəhd edin.');
         return r.json();
@@ -112,6 +130,7 @@ document.getElementById('login').addEventListener('submit', (e) => {
         sessionStorage.setItem('accessToken', res.accessToken);
         location.replace('./');
     }).catch(err => {
+        if (err.retryAfter) return blockFor(err.retryAfter);
         msg.textContent = err.message === 'Failed to fetch' ? 'Serverlə əlaqə yoxdur.' : err.message;
         submit.disabled = false;
     });
