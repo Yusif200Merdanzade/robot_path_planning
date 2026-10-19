@@ -1,5 +1,7 @@
 package com.example.robotpathplanning.security;
 
+import com.example.robotpathplanning.security.captcha.CaptchaException;
+import com.example.robotpathplanning.security.captcha.CaptchaVerifier;
 import com.example.robotpathplanning.security.dto.JwtRequest;
 import com.example.robotpathplanning.security.dto.JwtResponse;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -9,7 +11,9 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 
 /**
- * İstifadəçi adı və parolu yoxlayır, düzdürsə token verir.
+ * Girişin ardıcıllığı: əvvəl CAPTCHA, sonra istifadəçi adı və parol; hamısı düzdürsə token.
+ *
+ * CAPTCHA keçilməyibsə parola heç baxılmır: bot parol sınamağa başlaya bilmir.
  *
  * İstifadəçi hələlik statikdir (AuthProperties). Baza əlavə olunanda yalnız bu sinif dəyişəcək
  * (istifadəçi bazadan oxunacaq, parol BCrypt ilə yoxlanacaq), API isə eyni qalacaq.
@@ -19,13 +23,24 @@ public class AuthService {
 
     private final AuthProperties properties;
     private final JwtProvider jwtProvider;
+    private final CaptchaVerifier captchaVerifier;
 
-    public AuthService(AuthProperties properties, JwtProvider jwtProvider) {
+    public AuthService(AuthProperties properties, JwtProvider jwtProvider, CaptchaVerifier captchaVerifier) {
         this.properties = properties;
         this.jwtProvider = jwtProvider;
+        this.captchaVerifier = captchaVerifier;
     }
 
-    public JwtResponse login(JwtRequest request) {
+    /**
+     * @param clientIp istifadəçinin IP-si (CAPTCHA provayderinə risk qiymətləndirməsi üçün ötürülür)
+     * @throws CaptchaException        CAPTCHA keçilmədi və ya yoxlana bilmədi
+     * @throws BadCredentialsException istifadəçi adı və ya parol səhvdir
+     */
+    public JwtResponse login(JwtRequest request, String clientIp) {
+        CaptchaVerifier.Result captcha = captchaVerifier.verify(request == null ? null : request.captchaToken(), clientIp);
+        if (captcha != CaptchaVerifier.Result.PASSED) {
+            throw new CaptchaException(captcha);
+        }
         if (!credentialsMatch(request)) {
             throw new BadCredentialsException("İstifadəçi adı və ya parol səhvdir");
         }

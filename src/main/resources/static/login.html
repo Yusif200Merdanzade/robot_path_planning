@@ -22,9 +22,14 @@
             border-radius: 6px;
             padding: 28px 32px;
             width: 100%;
-            max-width: 320px;
+            max-width: 380px;   /* CAPTCHA vidceti ən azı 300px enindədir */
             box-sizing: border-box;
         }
+        #captcha {
+            min-height: 65px;   /* vidcet yüklənənə qədər forma "tullanmasın" */
+            margin-bottom: 14px;
+        }
+        #captcha:empty { display: none; }
         h1 {
             color: #3a3226;
             font-size: 20px;
@@ -80,19 +85,70 @@
     <input type="text" id="username" autocomplete="username" required autofocus>
     <label for="password">Parol</label>
     <input type="password" id="password" autocomplete="current-password" required>
-    <button type="submit" id="submit">Daxil ol</button>
+    <div id="captcha"></div>
+    <button type="submit" id="submit" disabled>Daxil ol</button>
 </form>
 
 <script>
 // Ünvanlar nisbidir ("api/auth/login", "./"): həm lokalda (/robot-path-planning/), həm serverdə (/) işləyir
 const msg = document.getElementById('msg');
 const submit = document.getElementById('submit');
+
+// Düymə yalnız bu şərtlərin hamısı ödənəndə aktivdir (bax: updateSubmit)
+const state = {
+    captchaRequired: true,   // server CAPTCHA-nı söndürübsə false
+    captchaToken: null,      // vidcetin verdiyi birdəfəlik token
+    blocked: false,          // rate limit geri sayımı gedir
+    sending: false           // sorğu göndərilib, cavab gözlənilir
+};
+let widgetId = null;
 let countdown = null;
 
+function updateSubmit() {
+    submit.disabled = state.sending || state.blocked || (state.captchaRequired && !state.captchaToken);
+}
+
+// ==================== CAPTCHA (Cloudflare Turnstile) ====================
+// Açıq parametrləri serverdən alır, Cloudflare skriptini yükləyir və vidceti qurur.
+// Token birdəfəlikdir: hər göndərişdən sonra (uğursuz olsa belə) vidcet yenilənir.
+function initCaptcha() {
+    fetch('api/auth/captcha').then(r => r.json()).then(config => {
+        state.captchaRequired = config.enabled;
+        updateSubmit();
+        if (!config.enabled) return;
+        window.onTurnstileLoad = () => {
+            widgetId = turnstile.render('#captcha', {
+                sitekey: config.siteKey,
+                action: config.action,
+                size: 'flexible',
+                callback: token => { state.captchaToken = token; updateSubmit(); },
+                'expired-callback': () => { state.captchaToken = null; updateSubmit(); },
+                'error-callback': () => {
+                    state.captchaToken = null;
+                    updateSubmit();
+                    msg.textContent = 'Robot yoxlaması yüklənmədi. Səhifəni yeniləyin.';
+                }
+            });
+        };
+        const script = document.createElement('script');
+        script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=onTurnstileLoad';
+        script.async = true;
+        script.onerror = () => msg.textContent = 'Robot yoxlaması yüklənmədi. İnternet əlaqəsini yoxlayın.';
+        document.head.appendChild(script);
+    }).catch(() => msg.textContent = 'Serverlə əlaqə yoxdur. Səhifəni yeniləyin.');
+}
+
+function resetCaptcha() {
+    state.captchaToken = null;
+    if (widgetId !== null) turnstile.reset(widgetId);
+}
+
+// ==================== Rate limit ====================
 /** Limitə düşəndə: düymə bağlanır, mesajda saniyələr canlı azalır, vaxt bitəndə düymə özü açılır. */
 function blockFor(seconds) {
     clearInterval(countdown);
-    submit.disabled = true;
+    state.blocked = true;
+    updateSubmit();
     let left = seconds;
     const render = () => msg.textContent = 'Çox cəhd etdiniz. ' + left + ' saniyə sonra yenidən yoxlayın.';
     render();
@@ -101,40 +157,55 @@ function blockFor(seconds) {
         if (left > 0) return render();
         clearInterval(countdown);
         msg.textContent = '';
-        submit.disabled = false;
+        state.blocked = false;
+        updateSubmit();
     }, 1000);
+}
+
+// ==================== Giriş ====================
+/** Server cavabını istifadəçi mesajına çevirir. */
+async function errorFor(r) {
+    if (r.status === 401) return new Error('İstifadəçi adı və ya parol səhvdir.');
+    if (r.status === 429) {
+        const error = new Error('rate-limited');
+        error.retryAfter = parseInt(r.headers.get('Retry-After'), 10) || 60;
+        return error;
+    }
+    const body = await r.json().catch(() => ({}));
+    if (body.code === 'captcha_rejected' || body.code === 'captcha_unavailable') return new Error(body.detail);
+    return new Error('Server xətası (' + r.status + '). Yenidən cəhd edin.');
 }
 
 document.getElementById('login').addEventListener('submit', (e) => {
     e.preventDefault();
     msg.textContent = '';
-    submit.disabled = true;
+    state.sending = true;
+    updateSubmit();
     fetch('api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             username: document.getElementById('username').value,
-            password: document.getElementById('password').value
+            password: document.getElementById('password').value,
+            captchaToken: state.captchaToken
         })
-    }).then(r => {
-        if (r.status === 401) throw new Error('İstifadəçi adı və ya parol səhvdir.');
-        if (r.status === 429) {
-            const error = new Error('rate-limited');
-            error.retryAfter = parseInt(r.headers.get('Retry-After'), 10) || 60;
-            throw error;
-        }
-        if (!r.ok) throw new Error('Server xətası (' + r.status + '). Yenidən cəhd edin.');
+    }).then(async r => {
+        if (!r.ok) throw await errorFor(r);
         return r.json();
     }).then(res => {
         // Yalnız index.html-ə ötürmək üçün: o, tokeni götürən kimi buradan silir (hər açılışda giriş tələb olunsun)
         sessionStorage.setItem('accessToken', res.accessToken);
         location.replace('./');
     }).catch(err => {
+        resetCaptcha();   // token istifadə olundu — növbəti cəhd üçün yenisi lazımdır
+        state.sending = false;
         if (err.retryAfter) return blockFor(err.retryAfter);
         msg.textContent = err.message === 'Failed to fetch' ? 'Serverlə əlaqə yoxdur.' : err.message;
-        submit.disabled = false;
+        updateSubmit();
     });
 });
+
+initCaptcha();
 </script>
 </body>
 </html>
