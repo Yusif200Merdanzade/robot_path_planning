@@ -7,6 +7,7 @@ import io.github.bucket4j.TimeMeter;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -15,14 +16,17 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy;
+import org.springframework.security.web.header.writers.StaticHeadersWriter;
 import tools.jackson.databind.json.JsonMapper;
 
 /**
  * JWT ilə giriş (digər layihələrdəki model): sessiya yoxdur, hər sorğu tokenlə gəlir.
  *
  *   POST /api/auth/login        - açıq, token verir
- *   index.html, login.html      - açıq (sadəcə səhifə qabığıdır, token olmadan heç bir məlumat göstərmir)
- *   /api/** və /ws/robot        - yalnız düzgün tokenlə; token yoxdursa 401
+ *   /api/** və /ws/**           - yalnız düzgün tokenlə; token yoxdursa 401
+ *   qalan hər şey               - açıq: səhifələr (index.html, login.html) sadəcə qabıqdır, məlumatı
+ *                                 yalnız API/WebSocket verir. Mövcud olmayan ünvan 401 yox, 404 alır.
  *   limitli ünvanlar            - IP üzrə sorğu limiti keçilibsə 429 (bax: ratelimit paketi)
  *
  * Filtrlərin sırası: RateLimitFilter -> JwtFilter -> ... -> controller
@@ -35,9 +39,25 @@ import tools.jackson.databind.json.JsonMapper;
 @EnableConfigurationProperties({AuthProperties.class, RateLimitProperties.class})
 public class SecurityConfig {
 
-    private static final String[] PUBLIC_URLS = {
-            "/", "/index.html", "/login.html", "/favicon.ico", "/error", "/api/auth/login"
-    };
+    /**
+     * Content-Security-Policy: brauzer yalnız bu serverdən kod/stil/əlaqə qəbul edir, səhifə başqa saytın
+     * içində (iframe) açılmır, plugin (object) yüklənmir.
+     *
+     * 'unsafe-inline' hələlik lazımdır: index.html/login.html-də skript və stillər səhifənin içindədir
+     * (onclick="..." də daxil). Onlar ayrıca .js fayllarına köçürüləndə 'unsafe-inline' script-src-dən
+     * çıxarılmalıdır — XSS-ə qarşı əsas qazanc o zaman olacaq.
+     * connect-src 'self' həm fetch-i, həm eyni hostdakı ws:/wss: əlaqəsini əhatə edir.
+     */
+    private static final String CONTENT_SECURITY_POLICY = String.join("; ",
+            "default-src 'self'",
+            "script-src 'self' 'unsafe-inline'",
+            "style-src 'self' 'unsafe-inline'",
+            "img-src 'self' data:",
+            "connect-src 'self'",
+            "object-src 'none'",
+            "base-uri 'self'",
+            "form-action 'self'",
+            "frame-ancestors 'none'");
 
     /** Vedrələr proses yaddaşında saxlanır (Redis-ə keçid yalnız bu metodu dəyişir — bax: RateLimiter). */
     @Bean
@@ -56,9 +76,17 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)   // cookie/sessiya yoxdur — CSRF riski yoxdur
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(PUBLIC_URLS).permitAll()
-                        .anyRequest().authenticated())
+                        .requestMatchers(HttpMethod.POST, "/api/auth/login").permitAll()
+                        .requestMatchers("/api/**", "/ws/**").authenticated()
+                        .anyRequest().permitAll())
                 .exceptionHandling(ex -> ex.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
+                // Spring Security standart olaraq X-Content-Type-Options, X-Frame-Options, Cache-Control və
+                // (HTTPS-də) HSTS əlavə edir; üstünə CSP, Referrer-Policy və Permissions-Policy
+                .headers(headers -> headers
+                        .contentSecurityPolicy(csp -> csp.policyDirectives(CONTENT_SECURITY_POLICY))
+                        .referrerPolicy(referrer -> referrer.policy(ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN))
+                        .addHeaderWriter(new StaticHeadersWriter("Permissions-Policy",
+                                "camera=(), microphone=(), geolocation=(), payment=(), usb=()")))
                 .addFilterBefore(new JwtFilter(jwtProvider), UsernamePasswordAuthenticationFilter.class);
 
         if (rateLimits.enabled()) {
