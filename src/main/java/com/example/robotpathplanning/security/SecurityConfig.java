@@ -23,7 +23,8 @@ import tools.jackson.databind.json.JsonMapper;
 /**
  * JWT ilə giriş (digər layihələrdəki model): sessiya yoxdur, hər sorğu tokenlə gəlir.
  *
- *   POST /api/auth/login        - açıq, token verir
+ *   POST /api/auth/login        - açıq, token verir (CAPTCHA + parol)
+ *   GET  /api/auth/captcha      - açıq, CAPTCHA vidcetinin açıq parametrləri
  *   /api/** və /ws/**           - yalnız düzgün tokenlə; token yoxdursa 401
  *   qalan hər şey               - açıq: səhifələr (index.html, login.html) sadəcə qabıqdır, məlumatı
  *                                 yalnız API/WebSocket verir. Mövcud olmayan ünvan 401 yox, 404 alır.
@@ -47,10 +48,13 @@ public class SecurityConfig {
      * (onclick="..." də daxil). Onlar ayrıca .js fayllarına köçürüləndə 'unsafe-inline' script-src-dən
      * çıxarılmalıdır — XSS-ə qarşı əsas qazanc o zaman olacaq.
      * connect-src 'self' həm fetch-i, həm eyni hostdakı ws:/wss: əlaqəsini əhatə edir.
+     * challenges.cloudflare.com - login-dəki CAPTCHA (Turnstile): skripti və vidcetin iframe-i oradan gəlir.
      */
+    private static final String CAPTCHA_ORIGIN = "https://challenges.cloudflare.com";
     private static final String CONTENT_SECURITY_POLICY = String.join("; ",
             "default-src 'self'",
-            "script-src 'self' 'unsafe-inline'",
+            "script-src 'self' 'unsafe-inline' " + CAPTCHA_ORIGIN,
+            "frame-src " + CAPTCHA_ORIGIN,
             "style-src 'self' 'unsafe-inline'",
             "img-src 'self' data:",
             "connect-src 'self'",
@@ -77,6 +81,7 @@ public class SecurityConfig {
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.POST, "/api/auth/login").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/auth/captcha").permitAll()
                         .requestMatchers("/api/**", "/ws/**").authenticated()
                         .anyRequest().permitAll())
                 .exceptionHandling(ex -> ex.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
