@@ -25,11 +25,30 @@
             max-width: 380px;   /* CAPTCHA vidceti ən azı 300px enindədir */
             box-sizing: border-box;
         }
-        #captcha {
-            min-height: 78px;   /* vidcet (reCAPTCHA 304×78) yüklənənə qədər forma "tullanmasın" */
-            margin-bottom: 14px;
+        #captcha-box { margin-bottom: 14px; }
+        #captcha-box[hidden] { display: none; }
+        /* "Mən robot deyiləm" — klik Cloudflare yoxlamasını başladır (bax: CAPTCHA_ADAPTERS.turnstile) */
+        .human {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px;
+            margin: 0 0 8px;
+            border: 1px solid #b8ad98;
+            border-radius: 4px;
+            background: #fff;
+            font-size: 14px;
+            cursor: pointer;
         }
-        #captcha:empty { display: none; }
+        .human[hidden] { display: none; }
+        .human input {
+            width: 22px;
+            height: 22px;
+            margin: 0;
+            cursor: inherit;
+        }
+        .human.ok { border-color: #2e8b57; color: #2e8b57; }
+        .human .brand { margin-left: auto; font-size: 11px; color: #888; }
         h1 {
             color: #3a3226;
             font-size: 20px;
@@ -85,7 +104,14 @@
     <input type="text" id="username" autocomplete="username" required autofocus>
     <label for="password">Parol</label>
     <input type="password" id="password" autocomplete="current-password" required>
-    <div id="captcha"></div>
+    <div id="captcha-box" hidden>
+        <label class="human" id="human" hidden>
+            <input type="checkbox" id="human-check">
+            <span id="human-text">Mən robot deyiləm</span>
+            <small class="brand">Cloudflare ilə qorunur</small>
+        </label>
+        <div id="captcha"></div>
+    </div>
     <button type="submit" id="submit" disabled>Daxil ol</button>
 </form>
 
@@ -113,21 +139,52 @@ function updateSubmit() {
 // Token birdəfəlikdir: hər göndərişdən sonra (uğursuz olsa belə) vidcet yenilənir.
 // Provayderə xas olan yalnız bu adapterlərdir — qalan məntiq hamısı üçün eynidir.
 const CAPTCHA_ADAPTERS = {
-    // Google reCAPTCHA v2: "Mən robot deyiləm" qutusu, istifadəçi həmişə klik edir
+    // Cloudflare Turnstile, kliklə: vidcet əvvəlcədən qurulur, amma yoxlama yalnız "Mən robot deyiləm"-ə
+    // klikdən sonra başlayır (execution: 'execute'). Qərarı yenə Cloudflare verir — klik özü sübut deyil,
+    // yoxlamanın başlanğıcıdır; şübhəli halda Cloudflare öz tapşırığını da göstərir.
+    turnstile: {
+        scriptUrl: 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=onCaptchaLoad',
+        render: (config, handlers) => turnstile.render('#captcha', {
+            sitekey: config.siteKey, action: config.action, size: 'flexible',
+            // Cloudflare-in öz vidceti yalnız istifadəçidən əlavə addım lazım olanda görünür — adətən 1 qutu qalır
+            execution: 'execute', appearance: 'interaction-only', ...handlers
+        }),
+        execute: () => turnstile.execute('#captcha'),
+        reset: id => turnstile.reset(id)
+    },
+    // Google reCAPTCHA v2: "I'm not a robot" qutusu Google-un öz vidcetidir
     recaptcha: {
         scriptUrl: 'https://www.google.com/recaptcha/api.js?render=explicit&hl=az&onload=onCaptchaLoad',
         render: (config, handlers) => grecaptcha.render('captcha', { sitekey: config.siteKey, ...handlers }),
         reset: id => grecaptcha.reset(id)
-    },
-    // Cloudflare Turnstile: çox vaxt kliksiz keçir
-    turnstile: {
-        scriptUrl: 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=onCaptchaLoad',
-        render: (config, handlers) => turnstile.render('#captcha',
-            { sitekey: config.siteKey, action: config.action, size: 'flexible', ...handlers }),
-        reset: id => turnstile.reset(id)
     }
 };
 let captchaAdapter = null;
+
+// "Mən robot deyiləm" qutusu: idle (klik gözləyir) -> checking (Cloudflare yoxlayır) -> ok (token alındı)
+const human = document.getElementById('human');
+const humanCheck = document.getElementById('human-check');
+const humanText = document.getElementById('human-text');
+const HUMAN_STATES = {
+    idle:     { checked: false, text: 'Mən robot deyiləm' },
+    checking: { checked: true,  text: 'Yoxlanılır…' },
+    ok:       { checked: true,  text: 'Təsdiqləndi ✓' }
+};
+
+function setHuman(name) {
+    const s = HUMAN_STATES[name];
+    humanCheck.checked = s.checked;
+    humanCheck.disabled = name !== 'idle';   // yoxlama gedərkən və keçəndən sonra təkrar klik olmur
+    humanText.textContent = s.text;
+    human.classList.toggle('ok', name === 'ok');
+}
+
+humanCheck.addEventListener('change', () => {
+    if (!humanCheck.checked) return;
+    msg.textContent = '';
+    setHuman('checking');
+    captchaAdapter.execute();
+});
 
 function initCaptcha() {
     fetch('api/auth/captcha').then(r => r.json()).then(config => {
@@ -135,14 +192,20 @@ function initCaptcha() {
         updateSubmit();
         if (!config.enabled) return;
         captchaAdapter = CAPTCHA_ADAPTERS[config.provider];
+        const clickToStart = Boolean(captchaAdapter.execute);
+        document.getElementById('captcha-box').hidden = false;
+        human.hidden = !clickToStart;
         const handlers = {
-            callback: token => { state.captchaToken = token; updateSubmit(); },
-            'expired-callback': () => { state.captchaToken = null; updateSubmit(); },
+            callback: token => {
+                state.captchaToken = token;
+                if (clickToStart) setHuman('ok');
+                updateSubmit();
+            },
+            'expired-callback': () => resetCaptcha(),   // token vaxtı keçdi — yenidən klik lazımdır
             // Həm yoxlama keçilməyəndə (bot şübhəsi), həm vidcet yüklənməyəndə çağırılır
             'error-callback': () => {
-                state.captchaToken = null;
-                updateSubmit();
-                msg.textContent = 'Robot yoxlaması keçilmədi. Səhifəni yeniləyib yenidən cəhd edin.';
+                resetCaptcha();
+                msg.textContent = 'Robot yoxlaması keçilmədi. Yenidən cəhd edin.';
             }
         };
         window.onCaptchaLoad = () => { widgetId = captchaAdapter.render(config, handlers); };
@@ -157,6 +220,8 @@ function initCaptcha() {
 function resetCaptcha() {
     state.captchaToken = null;
     if (widgetId !== null) captchaAdapter.reset(widgetId);
+    if (captchaAdapter.execute) setHuman('idle');
+    updateSubmit();
 }
 
 // ==================== Rate limit ====================

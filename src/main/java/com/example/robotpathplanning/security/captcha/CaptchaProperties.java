@@ -9,7 +9,7 @@ import java.time.Duration;
  * CAPTCHA parametrləri (app.captcha.*, bax: application.properties). Başlanğıcda yoxlanır.
  *
  * @param enabled          false olsa login CAPTCHA-sız işləyir (qəza halı üçün açar)
- * @param provider         recaptcha (həmişə klik) və ya turnstile (bax: CaptchaProvider)
+ * @param provider         turnstile və ya recaptcha (bax: CaptchaProvider)
  * @param siteKey          açıq açar: brauzerdəki vidcet üçün, səhifəyə verilir
  * @param secretKey        gizli açar: yalnız server tokeni provayderə yoxlatdıranda istifadə edir
  * @param timeout          provayder cavab verməsə nə qədər gözlənilir (sonra giriş rədd olunur)
@@ -19,7 +19,7 @@ import java.time.Duration;
  */
 @ConfigurationProperties("app.captcha")
 public record CaptchaProperties(@DefaultValue("true") boolean enabled,
-                                @DefaultValue("recaptcha") CaptchaProvider provider,
+                                @DefaultValue("turnstile") CaptchaProvider provider,
                                 String siteKey,
                                 String secretKey,
                                 @DefaultValue("5s") Duration timeout,
