@@ -18,6 +18,9 @@ public class WebSocketConfig implements WebSocketConfigurer {
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
-        registry.addHandler(handler, "/ws/robot").setAllowedOrigins("*");
+        // setAllowedOrigins çağırılmır: Spring standart olaraq yalnız eyni mənbədən (bu saytın öz səhifəsindən)
+        // qoşulmağa icazə verir, başqa saytdan açılan qoşulma 403 alır. Serverdə (Render) mənbə proxy-nin
+        // X-Forwarded-* başlıqlarından düzgün bərpa olunur (bax: application-prod.properties).
+        registry.addHandler(handler, "/ws/robot");
     }
 }
