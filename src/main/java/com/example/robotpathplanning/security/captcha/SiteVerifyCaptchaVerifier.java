@@ -110,10 +110,12 @@ public class SiteVerifyCaptchaVerifier implements CaptchaVerifier {
                               Metadata metadata) {
 
         boolean usedTestingKeyFlag() {
-            return metadata != null && metadata.resultWithTestingKey();
+            return metadata != null && Boolean.TRUE.equals(metadata.resultWithTestingKey());
         }
 
-        record Metadata(@JsonProperty("result_with_testing_key") boolean resultWithTestingKey) {
+        // Boolean (boolean yox): real açarın cavabında bu sahə olmur (metadata-da yalnız ephemeral_id),
+        // Jackson 3 isə olmayan sahəni primitiv boolean-a yaza bilmir -> cavab oxunmurdu
+        record Metadata(@JsonProperty("result_with_testing_key") Boolean resultWithTestingKey) {
         }
     }
 }
