@@ -13,52 +13,54 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Cloudflare Turnstile tokenini server tərəfdə yoxlayır (siteverify API).
+ * CAPTCHA tokenini server tərəfdə provayderin "siteverify" API-si ilə yoxlayır.
+ * Google reCAPTCHA və Cloudflare Turnstile eyni API-ni verir — fərqləri CaptchaProvider-dədir.
  *
  * Brauzerin "keçdim" deməsinə güvənilmir: hücumçu brauzeri atlayıb API-ni birbaşa çağıra bilər.
- * Token yalnız Cloudflare təsdiqləyəndə qəbul olunur. Token birdəfəlikdir və 5 dəqiqə yaşayır —
- * bunu Cloudflare özü yoxlayır ("timeout-or-duplicate").
+ * Token yalnız provayder təsdiqləyəndə qəbul olunur. Token birdəfəlikdir və bir neçə dəqiqə yaşayır —
+ * bunu provayder özü yoxlayır ("timeout-or-duplicate").
  *
- * Əlavə yoxlamalar (Cloudflare "success" desə belə):
- *   action   - token məhz login vidcetindən alınıb (Cloudflare göndərəndə; test açarları göndərmir)
- *   hostname - token bizim saytda alınıb (app.captcha.expected-hostname verilibsə)
+ * Əlavə yoxlamalar (provayder "success" desə belə):
  *   test key - prod-da test açarının nəticəsi rədd olunur: təsadüfən test açarı qoyulsa,
  *              CAPTCHA hamını səssizcə buraxardı
+ *   action   - token məhz login vidcetindən alınıb (yalnız Turnstile göndərir)
+ *   hostname - token bizim saytda alınıb (app.captcha.expected-hostname verilibsə)
  */
-public class TurnstileVerifier implements CaptchaVerifier {
+public class SiteVerifyCaptchaVerifier implements CaptchaVerifier {
 
-    private static final Logger log = LoggerFactory.getLogger(TurnstileVerifier.class);
+    private static final Logger log = LoggerFactory.getLogger(SiteVerifyCaptchaVerifier.class);
 
-    /** Vidcetdə verilən action ilə eyni olmalıdır (bax: login.html). */
+    /** Turnstile vidcetində verilən action ilə eyni olmalıdır (bax: login.html). */
     public static final String LOGIN_ACTION = "login";
-    /** Cloudflare: token ən çox 2048 simvol olur — daha uzunu Cloudflare-ə göndərmədən rədd olunur. */
-    private static final int MAX_TOKEN_LENGTH = 2048;
+    /** Token bundan uzun olmur — daha uzunu provayderə göndərmədən rədd olunur. */
+    private static final int MAX_TOKEN_LENGTH = 4096;
     /** Bizim konfiqurasiya səhvi (istifadəçinin günahı deyil): gizli açar yoxdur / səhvdir. */
     private static final Set<String> CONFIGURATION_ERRORS = Set.of("missing-input-secret", "invalid-input-secret");
 
     private final CaptchaProperties properties;
     private final RestClient restClient;
 
-    public TurnstileVerifier(CaptchaProperties properties, RestClient restClient) {
+    public SiteVerifyCaptchaVerifier(CaptchaProperties properties, RestClient restClient) {
         this.properties = properties;
         this.restClient = restClient;
     }
 
     @Override
     public Result verify(String token, String clientIp) {
+        // Boş token provayderə heç göndərilmir: Google-un test açarı boş tokeni də "keçir" sayır
         if (token == null || token.isBlank() || token.length() > MAX_TOKEN_LENGTH) return Result.REJECTED;
 
         SiteVerifyResponse response;
         try {
             response = restClient.post()
-                    .uri(properties.verifyUrl())
+                    .uri(properties.provider().verifyUrl())
                     .contentType(MediaType.APPLICATION_FORM_URLENCODED)
                     .body(form(token, clientIp))
                     .retrieve()
                     .body(SiteVerifyResponse.class);
         } catch (RestClientException e) {
-            // Cloudflare cavab vermədi / 5xx / timeout — fail-closed: giriş rədd olunur
-            log.error("CAPTCHA yoxlanması alınmadı: Cloudflare əlçatan deyil ({})", e.getMessage());
+            // Provayder cavab vermədi / 5xx / timeout — fail-closed: giriş rədd olunur
+            log.error("CAPTCHA yoxlanması alınmadı: {} əlçatan deyil ({})", properties.provider(), e.getMessage());
             return Result.UNAVAILABLE;
         }
         return evaluate(response);
@@ -70,14 +72,15 @@ public class TurnstileVerifier implements CaptchaVerifier {
 
         if (!response.success()) {
             if (errors.stream().anyMatch(CONFIGURATION_ERRORS::contains) || errors.contains("internal-error")) {
-                log.error("CAPTCHA yoxlanması alınmadı: Cloudflare xətası {} (gizli açarı yoxlayın)", errors);
+                log.error("CAPTCHA yoxlanması alınmadı: {} xətası {} (gizli açarı yoxlayın)", properties.provider(), errors);
                 return Result.UNAVAILABLE;
             }
             log.debug("CAPTCHA rədd olundu: {}", errors);
             return Result.REJECTED;
         }
-        if (response.usedTestKey() && !properties.allowTestKeys()) {
-            log.error("CAPTCHA test açarı ilə işləyir, prod-da qəbul olunmur: TURNSTILE_* açarlarını yoxlayın");
+        if (properties.provider().isTestKeyResult(response.hostname(), response.usedTestingKeyFlag())
+                && !properties.allowTestKeys()) {
+            log.error("CAPTCHA test açarı ilə işləyir, prod-da qəbul olunmur: CAPTCHA_SITE_KEY / CAPTCHA_SECRET_KEY yoxlayın");
             return Result.UNAVAILABLE;
         }
         if (response.action() != null && !LOGIN_ACTION.equals(response.action())) {
@@ -99,14 +102,14 @@ public class TurnstileVerifier implements CaptchaVerifier {
         return form;
     }
 
-    /** Cloudflare siteverify cavabının bizə lazım olan hissəsi. */
+    /** siteverify cavabının bizə lazım olan hissəsi (hər iki provayder üçün eyni format). */
     record SiteVerifyResponse(boolean success,
                               @JsonProperty("error-codes") List<String> errorCodes,
                               String hostname,
                               String action,
                               Metadata metadata) {
 
-        boolean usedTestKey() {
+        boolean usedTestingKeyFlag() {
             return metadata != null && metadata.resultWithTestingKey();
         }
 

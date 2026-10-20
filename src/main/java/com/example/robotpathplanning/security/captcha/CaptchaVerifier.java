@@ -3,8 +3,9 @@ package com.example.robotpathplanning.security.captcha;
 /**
  * "Bu CAPTCHA tokeni həqiqidirmi?" — provayderdən asılı olmayan müqavilə.
  *
- * İndi Cloudflare Turnstile işləyir (TurnstileVerifier). reCAPTCHA və ya hCaptcha-ya keçid yalnız
- * bu interfeysin yeni implementasiyasını tələb edir — AuthService və login axını dəyişmir.
+ * İndi SiteVerifyCaptchaVerifier işləyir: Google reCAPTCHA və Cloudflare Turnstile (bax: CaptchaProvider).
+ * Fərqli API-li provayderə keçid yalnız bu interfeysin yeni implementasiyasını tələb edir —
+ * AuthService və login axını dəyişmir.
  */
 public interface CaptchaVerifier {
 

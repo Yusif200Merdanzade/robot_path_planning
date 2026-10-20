@@ -1,5 +1,6 @@
 package com.example.robotpathplanning.security;
 
+import com.example.robotpathplanning.security.captcha.CaptchaProperties;
 import com.example.robotpathplanning.security.ratelimit.RateLimitFilter;
 import com.example.robotpathplanning.security.ratelimit.RateLimitProperties;
 import com.example.robotpathplanning.security.ratelimit.RateLimiter;
@@ -48,20 +49,23 @@ public class SecurityConfig {
      * (onclick="..." də daxil). Onlar ayrıca .js fayllarına köçürüləndə 'unsafe-inline' script-src-dən
      * çıxarılmalıdır — XSS-ə qarşı əsas qazanc o zaman olacaq.
      * connect-src 'self' həm fetch-i, həm eyni hostdakı ws:/wss: əlaqəsini əhatə edir.
-     * challenges.cloudflare.com - login-dəki CAPTCHA (Turnstile): skripti və vidcetin iframe-i oradan gəlir.
+     * CAPTCHA aktivdirsə, yalnız seçilmiş provayderin mənbələri əlavə olunur (skript və vidcetin iframe-i).
      */
-    private static final String CAPTCHA_ORIGIN = "https://challenges.cloudflare.com";
-    private static final String CONTENT_SECURITY_POLICY = String.join("; ",
-            "default-src 'self'",
-            "script-src 'self' 'unsafe-inline' " + CAPTCHA_ORIGIN,
-            "frame-src " + CAPTCHA_ORIGIN,
-            "style-src 'self' 'unsafe-inline'",
-            "img-src 'self' data:",
-            "connect-src 'self'",
-            "object-src 'none'",
-            "base-uri 'self'",
-            "form-action 'self'",
-            "frame-ancestors 'none'");
+    static String contentSecurityPolicy(CaptchaProperties captcha) {
+        String captchaScripts = captcha.enabled() ? " " + String.join(" ", captcha.provider().scriptSources()) : "";
+        String captchaFrames = captcha.enabled() ? String.join(" ", captcha.provider().frameSources()) : "'none'";
+        return String.join("; ",
+                "default-src 'self'",
+                "script-src 'self' 'unsafe-inline'" + captchaScripts,
+                "frame-src " + captchaFrames,
+                "style-src 'self' 'unsafe-inline'",
+                "img-src 'self' data:",
+                "connect-src 'self'",
+                "object-src 'none'",
+                "base-uri 'self'",
+                "form-action 'self'",
+                "frame-ancestors 'none'");
+    }
 
     /** Vedrələr proses yaddaşında saxlanır (Redis-ə keçid yalnız bu metodu dəyişir — bax: RateLimiter). */
     @Bean
@@ -73,7 +77,7 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http, JwtProvider jwtProvider,
                                                    RateLimitProperties rateLimits, RateLimiter rateLimiter,
-                                                   JsonMapper json) throws Exception {
+                                                   JsonMapper json, CaptchaProperties captcha) throws Exception {
         http
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .formLogin(AbstractHttpConfigurer::disable)
@@ -88,7 +92,7 @@ public class SecurityConfig {
                 // Spring Security standart olaraq X-Content-Type-Options, X-Frame-Options, Cache-Control və
                 // (HTTPS-də) HSTS əlavə edir; üstünə CSP, Referrer-Policy və Permissions-Policy
                 .headers(headers -> headers
-                        .contentSecurityPolicy(csp -> csp.policyDirectives(CONTENT_SECURITY_POLICY))
+                        .contentSecurityPolicy(csp -> csp.policyDirectives(contentSecurityPolicy(captcha)))
                         .referrerPolicy(referrer -> referrer.policy(ReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN))
                         .addHeaderWriter(new StaticHeadersWriter("Permissions-Policy",
                                 "camera=(), microphone=(), geolocation=(), payment=(), usb=()")))
