@@ -63,12 +63,12 @@
 </head>
 <body>
     <button onclick="logout()" style="position:absolute;top:12px;right:16px;margin:0;padding:6px 14px;font-size:13px;background:#7a6e5a">Çıxış</button>
-    <h1>Anbar Robotu — A* / D* Lite Yol Tapma Simulyasiyası <small style="font-size:11px;color:#888">v24 · CAPTCHA: Cloudflare Turnstile vidceti (klik)</small></h1>
+    <h1>Anbar Robotu — A* / D* Lite Yol Tapma Simulyasiyası <small style="font-size:11px;color:#888">v25 · Hər girişin öz simulyasiyası, "Başlat" gözlənilir</small></h1>
     <canvas id="grid" width="720" height="640"></canvas>
     <div id="status">Simulyasiya yüklənir...</div>
     <div id="fuzzy"></div>
     <div id="planner"></div>
-    <button id="startBtn" onclick="startSimulation()">Başlat</button>
+    <button id="startBtn" onclick="startSimulation()" disabled>Başlat</button>
     <div id="connection">Bağlantı gözlənilir...</div>
 
 <script>
@@ -81,7 +81,7 @@ const connEl = document.getElementById('connection');
 
 let ws;
 let state = null;
-let lastMessageAt = 0;   // serverdən son vəziyyətin gəldiyi an (0 = bu qoşulmada hələ gəlməyib)
+let simulationId = null; // bu səhifənin simulyasiyası: server qoşulanda verir ("hello"), "Başlat" onu göndərir
 const CELL = 55;
 const MARGIN = 30;
 
@@ -123,24 +123,24 @@ function connectWS() {
     const basePath = location.pathname.replace(/\/+$/, '');
     // Brauzerin WebSocket API-si Authorization başlığı göndərə bilmir — token ünvanda ötürülür
     ws = new WebSocket(proto + '//' + location.host + basePath + '/ws/robot?token=' + encodeURIComponent(token));
-    lastMessageAt = 0;
 
     ws.onopen = () => {
         // "bağlı" həm "qoşulub", həm də "qapalı" kimi oxunur — ona görə birmənalı yazılır
         connEl.textContent = '🟢 Serverə qoşulub (WebSocket aktivdir)';
         connEl.style.color = '#27ae60';
-        // Səhifə açılan kimi robot görünsün: simulyasiya artıq gedirsə server hər tick vəziyyət göndərir
-        // və biz ona sadəcə qoşuluruq (başqa baxanlar üçün yenidən başlamır). 1.5 san ərzində heç nə
-        // gəlməyibsə simulyasiya ya başlamayıb, ya da bitib — onda avtomatik başladılır.
-        const socket = ws;
-        setTimeout(() => {
-            if (ws === socket && ws.readyState === WebSocket.OPEN && !lastMessageAt) startSimulation();
-        }, 1500);
     };
 
     ws.onmessage = (e) => {
-        state = JSON.parse(e.data);
-        lastMessageAt = Date.now();
+        const message = JSON.parse(e.data);
+        // Hər qoşulmanın öz simulyasiyası var və o, avtomatik başlamır: istifadəçi "Başlat"-ı basmalıdır.
+        // Qoşulma yenilənibsə (əlaqə qopdu) köhnə simulyasiya serverdə dayandırılıb — yenidən başlatmaq lazımdır.
+        if (message.type === 'hello') {
+            simulationId = message.simulationId;
+            if (!startCountdown) startBtn.disabled = false;
+            statusEl.textContent = 'Simulyasiyanı başlatmaq üçün "Başlat" düyməsini basın.';
+            return;
+        }
+        state = message;
         onRobotState(state);
         statusEl.textContent = state.status;
         if (state.fuzzyInfo) {
@@ -153,6 +153,8 @@ function connectWS() {
     };
 
     ws.onclose = () => {
+        simulationId = null;
+        startBtn.disabled = true;
         connEl.textContent = '🔴 Serverlə əlaqə kəsildi. Yenidən qoşulur...';
         connEl.style.color = '#e74c3c';
         setTimeout(connectWS, 2000);
@@ -197,8 +199,9 @@ function lockStartButton(seconds) {
             return;
         }
         clearInterval(startCountdown);
+        startCountdown = null;
         startBtn.textContent = 'Başlat';
-        startBtn.disabled = false;
+        startBtn.disabled = !simulationId;
     }, 1000);
 }
 
@@ -206,8 +209,15 @@ function startSimulation() {
     const basePath = location.pathname.replace(/\/+$/, '');
     const token = getToken();
     if (!token) { goLogin(); return; }
-    fetch(basePath + '/api/start', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token } }).then(r => {
+    if (!simulationId) return;   // serverə hələ qoşulmayıb — düymə onsuz da bağlıdır
+    fetch(basePath + '/api/start', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ simulationId: simulationId })
+    }).then(r => {
         if (r.status === 401) { goLogin(); throw new Error('giriş tələb olunur'); }
+        if (r.status === 404) throw new Error('Serverlə əlaqə yeniləndi. Bir azdan yenidən "Başlat"-ı basın.');
+        if (r.status === 503) throw new Error('Server hazırda məşğuldur (çox simulyasiya gedir). Bir az sonra yenidən cəhd edin.');
         if (r.status === 429) {
             const seconds = parseInt(r.headers.get('Retry-After'), 10) || 5;
             lockStartButton(seconds);
