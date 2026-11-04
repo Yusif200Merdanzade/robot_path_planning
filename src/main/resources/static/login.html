@@ -4,91 +4,501 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Giriş — Anbar Robotu</title>
+    <script src="js/theme.js"></script>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="stylesheet" href="css/theme.css">
     <style>
-        body {
-            margin: 0;
+        /* İki hissəli düzülüş: solda brend paneli (illüstrasiya), sağda giriş forması */
+        .auth {
             min-height: 100vh;
-            background: #e6ddd0;
-            font-family: 'Segoe UI', sans-serif;
+            display: grid;
+            grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+        }
+
+        /* ---------- Sol: brend paneli (temadan asılı deyil, həmişə tünd) ---------- */
+        .showcase {
+            position: relative;
+            margin: 16px 0 16px 16px;
+            padding: 40px 44px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            border-radius: 24px;
+            color: #e6ecf7;
+            background:
+                    radial-gradient(600px 400px at 85% 10%, rgba(129, 140, 248, 0.35), transparent 60%),
+                    radial-gradient(500px 400px at 10% 90%, rgba(56, 189, 248, 0.30), transparent 60%),
+                    linear-gradient(160deg, #0b1430 0%, #070b1a 100%);
+            isolation: isolate;
+        }
+        /* İncə xəritə şəbəkəsi */
+        .showcase::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            z-index: -1;
+            background-image:
+                    linear-gradient(rgba(148, 163, 184, 0.07) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(148, 163, 184, 0.07) 1px, transparent 1px);
+            background-size: 40px 40px;
+            mask-image: radial-gradient(ellipse at 50% 55%, #000 30%, transparent 75%);
+            -webkit-mask-image: radial-gradient(ellipse at 50% 55%, #000 30%, transparent 75%);
+        }
+        .showcase .brand { color: #fff; }
+        .hero {
+            flex: 1;
+            display: grid;
+            place-items: center;
+            position: relative;
+            min-height: 0;
+            padding: 24px 0;
+        }
+        .hero svg.robot { width: min(100%, 500px); height: auto; overflow: visible; }
+        .scan { transform-origin: 240px 238px; animation: scan 3.2s ease-out infinite; }
+        .scan.s2 { animation-delay: 1.6s; }
+        @keyframes scan {
+            0% { transform: scale(.55); opacity: 0; }
+            25% { opacity: .9; }
+            100% { transform: scale(1.25); opacity: 0; }
+        }
+        .float { animation: float 5s ease-in-out infinite; }
+        @keyframes float { 50% { transform: translateY(-8px); } }
+        .blink { animation: blink 1.8s steps(1) infinite; }
+        @keyframes blink { 50% { opacity: .25; } }
+        .path-flow { stroke-dasharray: 2 12; animation: flow 1.2s linear infinite; }
+        @keyframes flow { to { stroke-dashoffset: -14; } }
+
+        /* Şəklin üstündəki şüşə kartlar */
+        .glass {
+            position: absolute;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            font-size: 13px;
+            font-weight: 600;
+            color: #fff;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-radius: 14px;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            box-shadow: 0 20px 40px -20px rgba(0, 0, 0, 0.6);
+            animation: float 6s ease-in-out infinite;
+        }
+        .glass small { display: block; font-size: 11.5px; font-weight: 500; color: rgba(230, 236, 247, 0.65); }
+        .glass .ic {
+            flex: none;
+            width: 30px;
+            height: 30px;
+            display: grid;
+            place-items: center;
+            border-radius: 9px;
+        }
+        .glass .ic svg { width: 16px; height: 16px; }
+        .glass.g1 { top: 14%; left: 2%; }
+        .glass.g1 .ic { color: #4ade80; background: rgba(34, 197, 94, 0.18); }
+        .glass.g2 { top: 30%; right: 0; animation-delay: -3s; }
+        .glass.g2 .ic { color: #38bdf8; background: rgba(56, 189, 248, 0.18); }
+
+        .showcase-copy h2 {
+            margin: 0 0 8px;
+            font-size: 28px;
+            line-height: 1.2;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            color: #fff;
+        }
+        .showcase-copy p { margin: 0; max-width: 440px; font-size: 15px; color: rgba(230, 236, 247, 0.7); }
+
+        /* ---------- Sağ: forma ---------- */
+        .panel {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 40px 24px 24px;
+        }
+        .theme-toggle { position: absolute; top: 24px; right: 24px; }
+        form {
+            width: 100%;
+            max-width: 380px;   /* CAPTCHA vidceti ən azı 300px enindədir */
+            margin: auto 0;
+        }
+        .brand { display: flex; align-items: center; gap: 10px; }
+        .brand-mark {
+            width: 36px;
+            height: 36px;
+            display: grid;
+            place-items: center;
+            border-radius: 10px;
+            color: var(--on-accent);
+            background: linear-gradient(135deg, var(--accent), var(--accent-2));
+            box-shadow: 0 10px 24px -12px var(--accent);
+        }
+        .showcase .brand-mark { color: #04111f; background: linear-gradient(135deg, #38bdf8, #818cf8); }
+        .brand-mark svg { width: 20px; height: 20px; }
+        .brand-name { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+        /* Forma tərəfində loqo yalnız sol panel gizlənəndə (kiçik ekran) görünür */
+        form .brand { display: none; margin-bottom: 28px; }
+        h1 {
+            font-size: 28px;
+            font-weight: 700;
+            letter-spacing: -0.025em;
+            margin: 0 0 6px;
+        }
+        p.sub {
+            color: var(--muted);
+            font-size: 15px;
+            margin: 0 0 30px;
+        }
+        /* Cloudflare vidceti çərçivəsiz, birbaşa formada (öz iframe-i — içi stillənmir) */
+        #captcha {
+            min-height: 65px;   /* vidcet yüklənənə qədər forma "tullanmasın" */
+            margin-bottom: 18px;
+            border-radius: 10px;
+            overflow: hidden;   /* vidcetin künclərini sahələrin radiusuna uyğunlaşdırır */
+        }
+        #captcha:empty { display: none; }
+        #submit { width: 100%; height: 46px; font-size: 15px; }
+        #msg {
+            font-size: 13px;
+            color: var(--danger);
+            background: var(--danger-soft);
+            border-radius: var(--radius-sm);
+            padding: 10px 12px;
+            margin-bottom: 18px;
+        }
+        #msg:empty { display: none; }
+        .foot { margin-top: 24px; font-size: 12px; color: var(--muted); text-align: center; }
+
+        /* Puzzle modalı yarımçıq bağlananda: yenidən açmaq üçün */
+        .verify-reopen {
             display: flex;
             align-items: center;
             justify-content: center;
-            padding: 16px;
-            box-sizing: border-box;
-        }
-        form {
-            background: #f4efe6;
-            border: 3px solid #5a5040;
-            border-radius: 6px;
-            padding: 28px 32px;
+            gap: 8px;
             width: 100%;
-            max-width: 380px;   /* CAPTCHA vidceti ən azı 300px enindədir */
-            box-sizing: border-box;
-        }
-        #captcha {
-            min-height: 78px;   /* vidcet yüklənənə qədər forma "tullanmasın" */
-            margin-bottom: 14px;
-        }
-        #captcha:empty { display: none; }
-        h1 {
-            color: #3a3226;
-            font-size: 20px;
-            margin: 0 0 4px;
-        }
-        p.sub {
-            color: #888;
-            font-size: 13px;
-            margin: 0 0 20px;
-        }
-        label {
-            display: block;
-            font-size: 13px;
-            color: #2c2416;
-            margin-bottom: 4px;
-        }
-        input {
-            width: 100%;
-            box-sizing: border-box;
-            padding: 9px 10px;
-            font-size: 15px;
-            border: 1px solid #b8ad98;
-            border-radius: 4px;
-            margin-bottom: 14px;
-            background: #fff;
-        }
-        button {
-            width: 100%;
-            padding: 10px;
-            font-size: 15px;
-            background: #2980b9;
-            color: white;
-            border: none;
-            border-radius: 5px;
+            margin: -6px 0 16px;
+            padding: 10px 12px;
+            font: 600 13px var(--font);
+            color: var(--accent);
+            background: var(--accent-soft);
+            border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+            border-radius: var(--radius-sm);
             cursor: pointer;
         }
-        button:hover { background: #1f6da0; }
-        button:disabled { background: #8aa9bf; cursor: default; }
-        #msg {
-            font-size: 13px;
-            color: #c81e1e;
-            margin-bottom: 14px;
+        .verify-reopen[hidden] { display: none; }
+        .verify-reopen:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); border-color: var(--accent); }
+        .verify-reopen:focus-visible { outline: none; box-shadow: var(--focus); }
+        .verify-reopen svg { width: 16px; height: 16px; }
+
+        /* ---------- Modal ---------- */
+        dialog.modal {
+            width: min(340px, calc(100vw - 32px));
+            padding: 16px;
+            color: var(--text);
+            background: var(--surface);
+            border: 1px solid var(--border-strong);
+            border-radius: 18px;
+            box-shadow: var(--shadow-lg);
         }
-        #msg:empty { display: none; }
+        dialog.modal[open] { animation: modal-in .25s cubic-bezier(.2, .9, .3, 1.1); }
+        dialog.modal::backdrop { background: rgba(2, 6, 23, 0.55); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); }
+        @keyframes modal-in { from { opacity: 0; transform: translateY(10px) scale(.97); } }
+        .modal-title { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: -0.01em; color: var(--text); }
+        .modal-actions { display: flex; gap: 2px; }
+
+        /* ---------- Mini puzzle: robotu park zonasına sürüşdür (data-state = idle | drag | success | fail) ---------- */
+        .verify[data-state="success"] #verifyTitle { color: var(--success); }
+        .verify[data-state="fail"] { animation: shake .4s; }
+        .verify[data-state="fail"] #verifyTitle { color: var(--danger); }
+        #verifyTitle { display: block; margin-top: 1px; font-size: 12px; font-weight: 500; color: var(--muted); }
+        @keyframes shake { 20%, 60% { transform: translateX(-5px); } 40%, 80% { transform: translateX(5px); } }
+        .verify-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-2);
+        }
+        .verify-refresh {
+            width: 28px;
+            height: 28px;
+            display: grid;
+            place-items: center;
+            border: 0;
+            border-radius: 8px;
+            color: var(--muted);
+            background: transparent;
+            cursor: pointer;
+        }
+        .verify-refresh:hover { color: var(--text); background: var(--surface-3); }
+        .verify-refresh:focus-visible { outline: none; box-shadow: var(--focus); }
+        .verify-refresh svg { width: 16px; height: 16px; }
+        .verify[data-state="success"] .verify-refresh { visibility: hidden; }
+        #puzzle { display: block; width: 100%; height: auto; border-radius: 10px; }
+
+        .slider {
+            position: relative;
+            height: 38px;
+            margin-top: 8px;
+            border-radius: 10px;
+            background: var(--surface);
+            border: 1px solid var(--border-strong);
+            overflow: hidden;
+            user-select: none;
+            touch-action: none;
+        }
+        .slider-fill {
+            position: absolute;
+            inset: 0 auto 0 0;
+            width: 0;
+            background: var(--accent-soft);
+        }
+        .slider-hint {
+            position: absolute;
+            inset: 0;
+            display: grid;
+            place-items: center;
+            padding-left: 38px;
+            font-size: 12px;
+            color: var(--muted);
+            pointer-events: none;
+        }
+        .slider-knob {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 38px;
+            height: 36px;
+            display: grid;
+            place-items: center;
+            border: 0;
+            border-radius: 9px;
+            color: var(--on-accent);
+            background: linear-gradient(135deg, var(--accent), var(--accent-2));
+            box-shadow: 0 6px 16px -8px var(--accent);
+            cursor: grab;
+            touch-action: none;
+        }
+        .slider-knob:focus-visible { outline: none; box-shadow: var(--focus); }
+        .slider-knob svg { width: 18px; height: 18px; }
+        .slider-knob .ok { display: none; }
+        .verify[data-state="drag"] .slider-knob { cursor: grabbing; }
+        .verify[data-state="drag"] .slider-hint { opacity: 0; }
+        .verify[data-state="idle"] .slider-knob,
+        .verify[data-state="idle"] .slider-fill { transition: left .3s ease, width .3s ease; }
+        .verify[data-state="success"] .slider-fill { background: var(--success-soft); }
+        .verify[data-state="success"] .slider-knob { background: var(--success); box-shadow: none; cursor: default; }
+        .verify[data-state="success"] .slider-knob .go { display: none; }
+        .verify[data-state="success"] .slider-knob .ok { display: block; }
+        .verify[data-state="success"] .slider-hint { color: var(--success); font-weight: 600; }
+        .verify[data-state="fail"] .slider-hint { color: var(--danger); }
+
+        @media (max-width: 960px) {
+            .auth { grid-template-columns: 1fr; }
+            .showcase { display: none; }
+            form .brand { display: flex; }
+        }
+        @media (max-width: 420px) {
+            .panel { padding: 72px 20px 20px; }
+            h1 { font-size: 24px; }
+        }
     </style>
 </head>
 <body>
-<form id="login">
-    <h1>🤖 Anbar Robotu</h1>
-    <p class="sub">Simulyasiyaya baxmaq üçün daxil olun</p>
-    <div id="msg"></div>
-    <label for="username">İstifadəçi adı</label>
-    <input type="text" id="username" autocomplete="username" required autofocus>
-    <label for="password">Parol</label>
-    <input type="password" id="password" autocomplete="current-password" required>
-    <div id="captcha"></div>
-    <button type="submit" id="submit" disabled>Daxil ol</button>
-</form>
+<div class="auth">
+    <aside class="showcase" aria-hidden="true">
+        <div class="brand">
+            <div class="brand-mark">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V4M9 13h.01M15 13h.01M2 13v2M22 13v2"/></svg>
+            </div>
+            <span class="brand-name">Anbar Robotu</span>
+        </div>
 
+        <div class="hero">
+            <!-- Anbar robotu (AMR) illüstrasiyası: rəflər, qutu daşıyan robot, skan dalğaları, hədəfə gedən yol -->
+            <svg class="robot" viewBox="0 0 480 400" fill="none">
+                <defs>
+                    <linearGradient id="gBody" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0" stop-color="#f8fafc"/>
+                        <stop offset="1" stop-color="#c9d4e3"/>
+                    </linearGradient>
+                    <linearGradient id="gBase" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0" stop-color="#94a3b8"/>
+                        <stop offset="1" stop-color="#64748b"/>
+                    </linearGradient>
+                    <linearGradient id="gVisor" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0" stop-color="#1e293b"/>
+                        <stop offset="1" stop-color="#0b1222"/>
+                    </linearGradient>
+                    <linearGradient id="gBox" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0" stop-color="#e3ab62"/>
+                        <stop offset="1" stop-color="#b9772f"/>
+                    </linearGradient>
+                    <radialGradient id="gEye">
+                        <stop offset="0" stop-color="#e0fbff"/>
+                        <stop offset=".5" stop-color="#67e8f9"/>
+                        <stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
+                    </radialGradient>
+                    <radialGradient id="gGlow">
+                        <stop offset="0" stop-color="#38bdf8" stop-opacity=".45"/>
+                        <stop offset="1" stop-color="#38bdf8" stop-opacity="0"/>
+                    </radialGradient>
+                </defs>
+
+                <!-- Arxa plan: rəflər -->
+                <g opacity=".55">
+                    <g stroke="#475569" stroke-width="5" stroke-linecap="round">
+                        <path d="M22 70v250M118 70v250M362 70v250M458 70v250"/>
+                        <path d="M22 140h96M22 220h96M22 300h96M362 140h96M362 220h96M362 300h96" stroke-width="4"/>
+                    </g>
+                    <g fill="#334155">
+                        <rect x="32" y="104" width="34" height="34" rx="4"/><rect x="72" y="114" width="36" height="24" rx="4"/>
+                        <rect x="34" y="190" width="30" height="28" rx="4"/>
+                        <rect x="372" y="110" width="40" height="28" rx="4"/><rect x="418" y="100" width="30" height="38" rx="4"/>
+                        <rect x="380" y="186" width="34" height="32" rx="4"/><rect x="420" y="196" width="28" height="22" rx="4"/>
+                        <rect x="372" y="270" width="36" height="28" rx="4"/>
+                        <rect x="70" y="268" width="38" height="30" rx="4"/>
+                    </g>
+                </g>
+
+                <!-- Hədəfə gedən yol və hədəf nişanı -->
+                <path class="path-flow" d="M312 336 C 360 336, 380 360, 420 362" stroke="#38bdf8" stroke-width="4" stroke-linecap="round"/>
+                <g transform="translate(428 362)">
+                    <ellipse rx="16" ry="5" fill="#22c55e" opacity=".3"/>
+                    <path d="M0-30c-9 0-15 6.5-15 14.5C-15-5 0 0 0 0s15-5 15-15.5C15-23.5 9-30 0-30z" fill="#22c55e"/>
+                    <circle cy="-16" r="5" fill="#052e16"/>
+                </g>
+
+                <!-- LiDAR skan dalğaları -->
+                <g stroke="#38bdf8" stroke-width="2" fill="none">
+                    <circle class="scan" cx="240" cy="238" r="150" stroke-dasharray="6 10"/>
+                    <circle class="scan s2" cx="240" cy="238" r="150" stroke-dasharray="6 10"/>
+                </g>
+                <circle cx="240" cy="238" r="170" fill="url(#gGlow)"/>
+
+                <!-- Robot -->
+                <ellipse cx="240" cy="334" rx="118" ry="14" fill="#000" opacity=".35"/>
+                <g class="float">
+                    <!-- Təkərlər -->
+                    <rect x="146" y="300" width="46" height="30" rx="12" fill="#0f172a"/>
+                    <rect x="288" y="300" width="46" height="30" rx="12" fill="#0f172a"/>
+                    <rect x="158" y="308" width="22" height="14" rx="7" fill="#334155"/>
+                    <rect x="300" y="308" width="22" height="14" rx="7" fill="#334155"/>
+
+                    <!-- Gövdə -->
+                    <rect x="126" y="186" width="228" height="124" rx="34" fill="url(#gBody)"/>
+                    <rect x="126" y="276" width="228" height="34" rx="17" fill="url(#gBase)"/>
+                    <rect x="200" y="288" width="80" height="6" rx="3" fill="#38bdf8"/>
+
+                    <!-- Vizor və gözlər -->
+                    <rect x="160" y="208" width="160" height="58" rx="29" fill="url(#gVisor)"/>
+                    <rect x="160" y="208" width="160" height="58" rx="29" stroke="#38bdf8" stroke-opacity=".35" stroke-width="2"/>
+                    <circle cx="208" cy="237" r="20" fill="url(#gEye)" opacity=".55"/>
+                    <circle cx="272" cy="237" r="20" fill="url(#gEye)" opacity=".55"/>
+                    <rect x="200" y="226" width="16" height="22" rx="8" fill="#a5f3fc"/>
+                    <rect x="264" y="226" width="16" height="22" rx="8" fill="#a5f3fc"/>
+
+                    <!-- Antena -->
+                    <path d="M330 190v-26" stroke="#94a3b8" stroke-width="4" stroke-linecap="round"/>
+                    <circle class="blink" cx="330" cy="158" r="7" fill="#4ade80"/>
+
+                    <!-- Daşınan qutu -->
+                    <rect x="180" y="122" width="120" height="68" rx="8" fill="url(#gBox)"/>
+                    <rect x="230" y="122" width="20" height="68" fill="#f5d9a8" opacity=".55"/>
+                    <rect x="196" y="160" width="26" height="16" rx="3" fill="#fff" opacity=".55"/>
+                    <path d="M180 140h120" stroke="#8a5a22" stroke-opacity=".25" stroke-width="2"/>
+                </g>
+            </svg>
+
+            <div class="glass g1">
+                <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+                <span>Yük çatdırıldı<small>Ən qısa yol tapıldı</small></span>
+            </div>
+            <div class="glass g2">
+                <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></span>
+                <span>Maneə aşkarlandı<small>Marşrut yeniləndi</small></span>
+            </div>
+        </div>
+
+        <div class="showcase-copy">
+            <h2>Anbarda ağıllı naviqasiya</h2>
+            <p>Robot ətrafını görür, maneələrdən yayınır və yükü hədəfə özü çatdırır.</p>
+        </div>
+    </aside>
+
+    <main class="panel">
+        <button type="button" class="btn btn-ghost icon-btn theme-toggle" onclick="toggleTheme()" title="Temanı dəyiş" aria-label="Temanı dəyiş">
+            <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+            <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        </button>
+
+        <form id="login">
+            <div class="brand">
+                <div class="brand-mark">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V4M9 13h.01M15 13h.01M2 13v2M22 13v2"/></svg>
+                </div>
+                <span class="brand-name">Anbar Robotu</span>
+            </div>
+            <h1>Xoş gəlmisiniz</h1>
+            <p class="sub">Davam etmək üçün hesabınıza daxil olun</p>
+            <div id="msg" role="alert"></div>
+            <div class="field">
+                <label for="username">İstifadəçi adı</label>
+                <input class="input" type="text" id="username" autocomplete="username" placeholder="İstifadəçi adınızı daxil edin" required autofocus>
+            </div>
+            <div class="field">
+                <label for="password">Şifrə</label>
+                <input class="input" type="password" id="password" autocomplete="current-password" placeholder="••••••••" required>
+            </div>
+            <div id="captcha"></div>
+            <!-- Cloudflare keçilib, puzzle isə bağlanıb tamamlanmayıbsa görünür -->
+            <button type="button" class="verify-reopen" id="verifyReopen" hidden>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="M12 9v4M12 16h.01"/></svg>
+                Robot yoxlamasını tamamlayın
+            </button>
+            <button type="submit" id="submit" class="btn btn-primary" disabled>Daxil ol</button>
+        </form>
+
+        <div class="foot">© 2026 Anbar Robotu</div>
+    </main>
+</div>
+
+<dialog class="modal" id="verifyModal" aria-labelledby="verifyModalTitle">
+            <div class="verify" id="verify" data-state="idle">
+                <div class="verify-head">
+                    <div>
+                        <h2 class="modal-title" id="verifyModalTitle">Robot yoxlaması</h2>
+                        <span id="verifyTitle">Robotu park zonasına aparın</span>
+                    </div>
+                    <div class="modal-actions">
+                        <button type="button" class="verify-refresh" id="puzzleRefresh" title="Yeni tapşırıq" aria-label="Yeni tapşırıq">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+                        </button>
+                        <button type="button" class="verify-refresh" id="verifyClose" title="Bağla" aria-label="Bağla">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <canvas id="puzzle" width="356" height="132" aria-hidden="true"></canvas>
+                <div class="slider" id="slider">
+                    <div class="slider-fill" id="sliderFill"></div>
+                    <div class="slider-hint" id="sliderHint">Sürüşdürün →</div>
+                    <button type="button" class="slider-knob" id="sliderKnob" role="slider" aria-label="Robotu sürüşdür"
+                            aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                        <svg class="go" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+                        <svg class="ok" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                    </button>
+                </div>
+            </div>
+</dialog>
+
+<script src="js/toast.js"></script>
 <script>
 // Ünvanlar nisbidir ("api/auth/login", "./"): həm lokalda (/robot-path-planning/), həm serverdə (/) işləyir
 const msg = document.getElementById('msg');
@@ -98,20 +508,247 @@ const submit = document.getElementById('submit');
 const state = {
     captchaRequired: true,   // server CAPTCHA-nı söndürübsə false
     captchaToken: null,      // vidcetin verdiyi birdəfəlik token
+    puzzleSolved: false,     // mini puzzle keçilib (yalnız UX qatı — real yoxlama CAPTCHA-dır, bax: aşağıda)
     blocked: false,          // rate limit geri sayımı gedir
     sending: false           // sorğu göndərilib, cavab gözlənilir
 };
 let widgetId = null;
 let countdown = null;
 
+// Puzzle Cloudflare yoxlamasından SONRA gəlir: düymə hər ikisi keçiləndə aktivdir. CAPTCHA söndürülübsə
+// (lokal / qəza rejimi) Cloudflare vidceti yoxdur — onda puzzle "Daxil ol"-a basanda açılır (bax: submit)
 function updateSubmit() {
-    submit.disabled = state.sending || state.blocked || (state.captchaRequired && !state.captchaToken);
+    submit.disabled = state.sending || state.blocked
+        || (state.captchaRequired && (!state.captchaToken || !state.puzzleSolved));
+    const open = document.getElementById('verifyModal').open;
+    document.getElementById('verifyReopen').hidden =
+        !(state.captchaRequired && state.captchaToken && !state.puzzleSolved && !open);
 }
+
+// ==================== Mini puzzle ====================
+// İstifadəçi sürgünü çəkib robotu təsadüfi yerdəki park zonasına aparır. Bu, brauzerdə işləyir, ona görə
+// TƏHLÜKƏSİZLİK QORUMASI DEYİL (bot API-ni birbaşa çağıra bilər) — yalnız istifadəçi təcrübəsidir.
+// Botlara qarşı əsl yoxlama server tərəfdə yoxlanan CAPTCHA-dır (Turnstile), o, puzzle-dan sonra da qalır.
+const puzzle = {
+    canvas: document.getElementById('puzzle'),
+    box: document.getElementById('verify'),
+    title: document.getElementById('verifyTitle'),
+    hint: document.getElementById('sliderHint'),
+    knob: document.getElementById('sliderKnob'),
+    fill: document.getElementById('sliderFill'),
+    slider: document.getElementById('slider'),
+    W: 356, H: 132, ROBOT: 44, START: 10,
+    TOLERANCE: 5,          // park zonasından ən çox neçə vahid kənara çıxmaq olar
+    targetX: 0, pieceX: 10,
+    dragging: false, startPointer: 0, startOffset: 0, offset: 0, startedAt: 0, moves: 0
+};
+
+function newPuzzle() {
+    const p = puzzle;
+    p.targetX = Math.round(120 + Math.random() * (p.W - p.ROBOT - 130));
+    p.pieceX = p.START;
+    setKnob(0);
+    setPuzzleState('idle', 'Robotu park zonasına aparın', 'Sürüşdürün →');
+    drawPuzzle();
+}
+
+function setPuzzleState(s, title, hint) {
+    puzzle.box.dataset.state = s;
+    puzzle.title.textContent = title;
+    puzzle.hint.textContent = hint;
+}
+
+function maxOffset() {
+    return puzzle.slider.clientWidth - puzzle.knob.offsetWidth;
+}
+
+/** Sürgünün yeri (CSS piksel) -> robotun puzzle-dakı yeri (canvas vahidi): sürgünün sonu = yolun sonu. */
+function setKnob(offset) {
+    const p = puzzle;
+    const max = Math.max(1, maxOffset());
+    p.offset = Math.max(0, Math.min(offset, max));
+    p.knob.style.left = p.offset + 'px';
+    p.fill.style.width = (p.offset + p.knob.offsetWidth / 2) + 'px';
+    p.pieceX = p.START + (p.offset / max) * (p.W - p.ROBOT - 2 * p.START);
+    p.knob.setAttribute('aria-valuenow', String(Math.round(100 * p.offset / max)));
+    drawPuzzle();
+}
+
+function finishPuzzle() {
+    const p = puzzle;
+    const elapsed = performance.now() - p.startedAt;
+    // Bir anda "teleport" olunmuş sürüşdürmə qəbul olunmur (insan əli ən azı bir neçə hərəkət edir)
+    const human = elapsed > 250 && p.moves >= 3;
+    if (Math.abs(p.pieceX - p.targetX) <= p.TOLERANCE && human) {
+        p.pieceX = p.targetX;   // dəqiq yerinə "oturur"
+        drawPuzzle();
+        state.puzzleSolved = true;
+        setPuzzleState('success', 'Yoxlama keçildi — robot park edildi', '');   // sürgünün üstündə yazı düyməyə düşməsin
+        // Uğuru bir an göstərib modal bağlanır və "Daxil ol" aktivləşir
+        setTimeout(() => {
+            verifyModal.close();
+            updateSubmit();
+            toast({ type: 'success', title: 'Yoxlama uğurlu', message: 'İndi daxil ola bilərsiniz.', duration: 2000 });
+            if (submitAfterPuzzle) {
+                submitAfterPuzzle = false;
+                loginForm.requestSubmit();   // puzzle "Daxil ol"-dan açılmışdısa giriş özü davam edir
+            } else if (!submit.disabled) {
+                submit.focus();
+            }
+        }, 700);
+        return;
+    }
+    setPuzzleState('fail', 'Yenidən cəhd edin', '');
+    setTimeout(newPuzzle, 900);
+}
+
+function resetPuzzle() {
+    state.puzzleSolved = false;
+}
+
+// Puzzle modalı. Hər açılışda yenidən qurulur (modal görünəndən sonra: sürgünün eni lazımdır)
+const verifyModal = document.getElementById('verifyModal');
+const loginForm = document.getElementById('login');
+let submitAfterPuzzle = false;   // puzzle "Daxil ol"-dan açılıb (CAPTCHA söndürülüb): keçiləndə giriş davam etsin
+
+function openPuzzle() {
+    if (state.puzzleSolved || verifyModal.open) return;
+    verifyModal.showModal();
+    newPuzzle();
+    updateSubmit();
+}
+
+document.getElementById('verifyClose').addEventListener('click', () => verifyModal.close());
+document.getElementById('verifyReopen').addEventListener('click', openPuzzle);
+// ✕, ESC və ya uğur: hər halda düymələrin vəziyyəti yenilənir; yarımçıq bağlanıbsa giriş gözləmir
+verifyModal.addEventListener('close', () => {
+    if (!state.puzzleSolved) submitAfterPuzzle = false;
+    updateSubmit();
+});
+
+puzzle.knob.addEventListener('pointerdown', e => {
+    if (state.puzzleSolved || puzzle.box.dataset.state === 'fail') return;
+    puzzle.dragging = true;
+    puzzle.startPointer = e.clientX;
+    puzzle.startOffset = puzzle.offset;
+    puzzle.startedAt = performance.now();
+    puzzle.moves = 0;
+    puzzle.knob.setPointerCapture(e.pointerId);
+    setPuzzleState('drag', 'Robotu park zonasına aparın', '');
+});
+puzzle.knob.addEventListener('pointermove', e => {
+    if (!puzzle.dragging) return;
+    puzzle.moves++;
+    setKnob(puzzle.startOffset + e.clientX - puzzle.startPointer);
+});
+['pointerup', 'pointercancel'].forEach(type => puzzle.knob.addEventListener(type, () => {
+    if (!puzzle.dragging) return;
+    puzzle.dragging = false;
+    finishPuzzle();
+}));
+// Klaviatura ilə də işləyir: ← → hərəkət etdirir, Enter yoxlayır
+puzzle.knob.addEventListener('keydown', e => {
+    if (state.puzzleSolved || puzzle.box.dataset.state === 'fail') return;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        if (!puzzle.moves) puzzle.startedAt = performance.now();
+        puzzle.moves++;
+        setKnob(puzzle.offset + (e.key === 'ArrowRight' ? 4 : -4));
+    } else if (e.key === 'Enter') {
+        e.preventDefault();
+        finishPuzzle();
+    }
+});
+document.getElementById('puzzleRefresh').addEventListener('click', newPuzzle);
+// Tema dəyişəndə puzzle yenidən çəkilir
+new MutationObserver(drawPuzzle).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+/** Kiçik anbar keçidi: yuxarıda rəflər, ortada yol, təsadüfi yerdə park zonası və sürüşdürülən robot. */
+function drawPuzzle() {
+    const p = puzzle, c = p.canvas, g = c.getContext('2d');
+    const dark = currentTheme() === 'dark';
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    if (c.width !== p.W * dpr) { c.width = p.W * dpr; c.height = p.H * dpr; }
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const rr = (x, y, w, h, r) => {
+        g.beginPath();
+        g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
+        g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
+    };
+
+    // Döşəmə və şəbəkə
+    g.fillStyle = dark ? '#0b1120' : '#e8edf4';
+    g.fillRect(0, 0, p.W, p.H);
+    g.strokeStyle = dark ? 'rgba(148,163,184,0.08)' : 'rgba(15,23,42,0.06)';
+    g.lineWidth = 1;
+    for (let x = 0; x <= p.W; x += 22) { g.beginPath(); g.moveTo(x + .5, 0); g.lineTo(x + .5, p.H); g.stroke(); }
+    for (let y = 0; y <= p.H; y += 22) { g.beginPath(); g.moveTo(0, y + .5); g.lineTo(p.W, y + .5); g.stroke(); }
+
+    // Rəflər (yuxarı sıra)
+    for (let x = 8; x < p.W - 20; x += 58) {
+        g.fillStyle = dark ? '#334155' : '#94a3b8';
+        rr(x, 8, 46, 22, 5); g.fill();
+        g.fillStyle = '#c98a3d';
+        rr(x + 6, 12, 12, 8, 2); g.fill();
+        rr(x + 22, 12, 12, 8, 2); g.fill();
+    }
+
+    // Yol: ortada qırıq xətt
+    const laneY = 84;
+    g.strokeStyle = dark ? 'rgba(148,163,184,0.25)' : 'rgba(15,23,42,0.18)';
+    g.setLineDash([8, 8]);
+    g.beginPath(); g.moveTo(0, laneY); g.lineTo(p.W, laneY); g.stroke();
+    g.setLineDash([]);
+
+    // Park zonası
+    const zy = laneY - p.ROBOT / 2;
+    const solved = state.puzzleSolved;
+    g.fillStyle = solved ? 'rgba(34,197,94,0.28)' : 'rgba(34,197,94,0.14)';
+    rr(p.targetX - 4, zy - 4, p.ROBOT + 8, p.ROBOT + 8, 10); g.fill();
+    g.strokeStyle = '#22c55e';
+    g.lineWidth = 2;
+    g.setLineDash(solved ? [] : [5, 4]);
+    rr(p.targetX - 4, zy - 4, p.ROBOT + 8, p.ROBOT + 8, 10); g.stroke();
+    g.setLineDash([]);
+    g.fillStyle = 'rgba(34,197,94,0.9)';
+    g.font = '700 11px ' + getComputedStyle(document.body).fontFamily;
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    if (!solved) g.fillText('P', p.targetX + p.ROBOT / 2, zy + p.ROBOT + 14);
+
+    // Robot (öndən görünüş, login səhifəsindəki illüstrasiya kimi)
+    const x = p.pieceX, y = zy, s = p.ROBOT;
+    g.fillStyle = 'rgba(0,0,0,0.25)';
+    g.beginPath(); g.ellipse(x + s / 2, y + s + 3, s / 2, 4, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#0f172a';
+    rr(x + 5, y + s - 8, 12, 10, 4); g.fill();
+    rr(x + s - 17, y + s - 8, 12, 10, 4); g.fill();
+    const body = g.createLinearGradient(0, y + 8, 0, y + s);
+    body.addColorStop(0, '#f8fafc'); body.addColorStop(1, '#c9d4e3');
+    g.fillStyle = body;
+    rr(x + 1, y + 12, s - 2, s - 16, 10); g.fill();
+    g.fillStyle = '#0f172a';
+    rr(x + 7, y + 18, s - 14, 14, 7); g.fill();
+    g.fillStyle = '#a5f3fc';
+    rr(x + 14, y + 21, 5, 8, 2.5); g.fill();
+    rr(x + s - 19, y + 21, 5, 8, 2.5); g.fill();
+    g.fillStyle = '#38bdf8';
+    rr(x + s / 2 - 8, y + s - 9, 16, 3, 1.5); g.fill();
+    // Üstündə qutu
+    g.fillStyle = '#d99a4e';
+    rr(x + 10, y, s - 20, 13, 3); g.fill();
+    g.fillStyle = 'rgba(245,217,168,0.6)';
+    g.fillRect(x + s / 2 - 3, y, 6, 13);
+}
+
+window.addEventListener('resize', () => { if (!state.puzzleSolved) setKnob(puzzle.offset); });
 
 // ==================== CAPTCHA ====================
 // Provayderi və açıq açarı serverdən alır (GET api/auth/captcha), skripti yükləyir, vidceti qurur.
 // Token birdəfəlikdir: hər göndərişdən sonra (uğursuz olsa belə) vidcet yenilənir.
 // Provayderə xas olan yalnız bu adapterlərdir — qalan məntiq hamısı üçün eynidir.
+// Vidcet səhifənin temasında (tünd/açıq) çəkilir: theme: currentTheme() (bax: js/theme.js).
 const CAPTCHA_ADAPTERS = {
     // Cloudflare Turnstile (dash.cloudflare.com-dakı kimi): Cloudflare arxa planda yoxlayır, sonra
     // "Verify you are human" qutusunu göstərir. Klikin lazım olub-olmamasını Cloudflare-dəki vidcet rejimi
@@ -119,13 +756,13 @@ const CAPTCHA_ADAPTERS = {
     turnstile: {
         scriptUrl: 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit&onload=onCaptchaLoad',
         render: (config, handlers) => turnstile.render('#captcha',
-            { sitekey: config.siteKey, action: config.action, size: 'flexible', ...handlers }),
+            { sitekey: config.siteKey, action: config.action, size: 'flexible', theme: currentTheme(), ...handlers }),
         reset: id => turnstile.reset(id)
     },
     // Google reCAPTCHA v2: "I'm not a robot" qutusu
     recaptcha: {
         scriptUrl: 'https://www.google.com/recaptcha/api.js?render=explicit&hl=az&onload=onCaptchaLoad',
-        render: (config, handlers) => grecaptcha.render('captcha', { sitekey: config.siteKey, ...handlers }),
+        render: (config, handlers) => grecaptcha.render('captcha', { sitekey: config.siteKey, theme: currentTheme(), ...handlers }),
         reset: id => grecaptcha.reset(id)
     }
 };
@@ -138,7 +775,8 @@ function initCaptcha() {
         if (!config.enabled) return;
         captchaAdapter = CAPTCHA_ADAPTERS[config.provider];
         const handlers = {
-            callback: token => { state.captchaToken = token; updateSubmit(); },
+            // Cloudflare keçildi -> dərhal puzzle (keçilibsə, məs. token yeniləndi, təkrar soruşulmur)
+            callback: token => { state.captchaToken = token; updateSubmit(); openPuzzle(); },
             'expired-callback': () => { state.captchaToken = null; updateSubmit(); },
             // Həm yoxlama keçilməyəndə (bot şübhəsi), həm vidcet yüklənməyəndə çağırılır
             'error-callback': () => {
@@ -183,7 +821,7 @@ function blockFor(seconds) {
 // ==================== Giriş ====================
 /** Server cavabını istifadəçi mesajına çevirir. */
 async function errorFor(r) {
-    if (r.status === 401) return new Error('İstifadəçi adı və ya parol səhvdir.');
+    if (r.status === 401) return new Error('İstifadəçi adı və ya şifrə yanlışdır.');
     if (r.status === 429) {
         const error = new Error('rate-limited');
         error.retryAfter = parseInt(r.headers.get('Retry-After'), 10) || 60;
@@ -191,11 +829,17 @@ async function errorFor(r) {
     }
     const body = await r.json().catch(() => ({}));
     if (body.code === 'captcha_rejected' || body.code === 'captcha_unavailable') return new Error(body.detail);
-    return new Error('Server xətası (' + r.status + '). Yenidən cəhd edin.');
+    // Status kodu istifadəçiyə göstərilmir: ona lazım deyil, hücumçuya isə serverin daxili haqqında məlumat verir
+    return new Error('Xəta baş verdi. Bir az sonra yenidən cəhd edin.');
 }
 
 document.getElementById('login').addEventListener('submit', (e) => {
     e.preventDefault();
+    if (!state.puzzleSolved) {
+        submitAfterPuzzle = true;
+        openPuzzle();
+        return;
+    }
     msg.textContent = '';
     state.sending = true;
     updateSubmit();
@@ -213,9 +857,11 @@ document.getElementById('login').addEventListener('submit', (e) => {
     }).then(res => {
         // Yalnız index.html-ə ötürmək üçün: o, tokeni götürən kimi buradan silir (hər açılışda giriş tələb olunsun)
         sessionStorage.setItem('accessToken', res.accessToken);
+        sessionStorage.setItem('loginToast', '1');   // əsas səhifə "uğurla daxil oldunuz" bildirişini göstərsin
         location.replace('./');
     }).catch(err => {
         resetCaptcha();   // token istifadə olundu — növbəti cəhd üçün yenisi lazımdır
+        resetPuzzle();    // puzzle da birdəfəlikdir: hər cəhddən əvvəl yenidən keçilməlidir
         state.sending = false;
         if (err.retryAfter) return blockFor(err.retryAfter);
         msg.textContent = err.message === 'Failed to fetch' ? 'Serverlə əlaqə yoxdur.' : err.message;
