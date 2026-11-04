@@ -2,88 +2,379 @@
 <html lang="az">
 <head>
     <meta charset="UTF-8">
-    <title>Anbar Robotu — A* / D* Lite</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Anbar Robotu</title>
+    <script src="js/theme.js"></script>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="stylesheet" href="css/theme.css">
+    <script src="js/toast.js"></script>
     <style>
-        body {
-            margin: 0;
-            background: #e6ddd0;
-            font-family: 'Segoe UI', sans-serif;
+        /* Legend nümunələri canvas-dakı rənglərlə eynidir (bax: PALETTES) */
+        :root {
+            --c-shelf: #64748b; --c-forklift: #ef4444; --c-box: #c98a3d; --c-goal: #16a34a;
+            --c-path: #2563eb; --c-trail: #16a34a; --c-fog: #cbd3e0; --c-mover: #eab308; --c-robot: #3b82f6;
+            --canvas-bg: #dfe5ee;   /* = PALETTES.light.bg: xəritənin kənar boşluğu fonla birləşsin */
+        }
+        :root[data-theme="dark"] {
+            --c-shelf: #475569; --c-forklift: #ef4444; --c-box: #c98a3d; --c-goal: #22c55e;
+            --c-path: #38bdf8; --c-trail: #22c55e; --c-fog: #0a0f1c; --c-mover: #eab308; --c-robot: #38bdf8;
+            --canvas-bg: #0b1120;   /* = PALETTES.dark.bg */
+        }
+
+        .app {
+            max-width: 1480px;
+            margin: 0 auto;
+            padding: 20px 24px 32px;
             display: flex;
             flex-direction: column;
-            align-items: center;
-            padding: 20px;
+            gap: 20px;
         }
-        h1 {
-            color: #3a3226;
-            font-size: 20px;
-            margin-bottom: 10px;
+
+        /* ---------- Yuxarı panel ---------- */
+        .topbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+        .brand { display: flex; align-items: center; gap: 14px; margin-right: auto; min-width: 0; }
+        .brand-mark {
+            flex: none;
+            width: 42px;
+            height: 42px;
+            display: grid;
+            place-items: center;
+            border-radius: 12px;
+            color: var(--on-accent);
+            background: linear-gradient(135deg, var(--accent), var(--accent-2));
+            box-shadow: 0 10px 24px -12px var(--accent);
+        }
+        .brand-mark svg { width: 24px; height: 24px; }
+        .brand h1 { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: -0.015em; }
+        .brand p { margin: 1px 0 0; font-size: 13px; color: var(--muted); }
+
+        /* Bağlantı indikatoru: data-state = pending | online | offline */
+        #connection { gap: 8px; }
+        #connection .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+        #connection[data-state="online"] { color: var(--success); background: var(--success-soft); border-color: transparent; }
+        #connection[data-state="online"] .dot { background: var(--success); animation: pulse 2s infinite; }
+        #connection[data-state="offline"] { color: var(--danger); background: var(--danger-soft); border-color: transparent; }
+        #connection[data-state="offline"] .dot { background: var(--danger); }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--success) 60%, transparent); }
+            70% { box-shadow: 0 0 0 6px transparent; }
+            100% { box-shadow: 0 0 0 0 transparent; }
+        }
+
+        /* ---------- Əsas düzülüş ---------- */
+        .layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 370px;
+            gap: 20px;
+            align-items: start;
+        }
+
+        .stage { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+
+        /* Ssenari addımları: data-state = todo | active | done */
+        .steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+        .step {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            border-radius: 12px;
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            min-width: 0;
+            transition: background-color .2s, border-color .2s;
+        }
+        .step .num {
+            flex: none;
+            width: 26px;
+            height: 26px;
+            display: grid;
+            place-items: center;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 700;
+            color: var(--muted);
+            background: var(--surface-3);
+        }
+        .step .label { min-width: 0; }
+        .step .title, .step .desc { display: block; }
+        .step .title { font-size: 13px; font-weight: 600; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .step .desc { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .step[data-state="active"] { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+        .step[data-state="active"] .num { color: var(--on-accent); background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
+        .step[data-state="active"] .title { color: var(--text); }
+        .step[data-state="done"] .num { color: #fff; background: var(--success); }
+        .step[data-state="done"] .num span { display: none; }
+        .step[data-state="done"] .num::after { content: "✓"; }
+
+        .canvas-wrap {
+            position: relative;
+            border-radius: 14px;
+            overflow: hidden;
+            border: 1px solid var(--border);
         }
         canvas {
-            border: 3px solid #5a5040;
-            border-radius: 4px;
-            background: #d2c8b4;
+            display: block;
+            width: 100%;
+            height: auto;
+            max-height: calc(100vh - 220px);
+            min-height: 260px;
+            object-fit: contain;
+            background: var(--canvas-bg);
         }
-        #status {
-            margin-top: 10px;
-            font-size: 15px;
-            color: #2c2416;
-            min-height: 24px;
-        }
-        #planner {
-            font-size: 13px;
-            color: #1f4e79;
-            min-height: 18px;
-            margin-top: 4px;
-            font-family: Consolas, monospace;
-            white-space: pre-line;   /* D* Lite hadisəsi ayrıca sətirdə */
+        /* Server ilk vəziyyəti göndərənə qədər canvas üstündə göstərilir */
+        .stage-empty {
+            position: absolute;
+            inset: 0;
+            display: grid;
+            place-items: center;
+            align-content: center;
+            gap: 10px;
             text-align: center;
-        }
-        #fuzzy {
+            color: var(--muted);
             font-size: 14px;
-            font-weight: bold;
-            min-height: 20px;
+            background: var(--canvas-bg);
         }
-        button {
-            margin-top: 12px;
-            padding: 10px 30px;
-            font-size: 15px;
-            background: #2980b9;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
+        .stage-empty[hidden] { display: none; }
+        .stage-empty svg { width: 44px; height: 44px; color: var(--accent); opacity: .8; }
+
+        /* ---------- Yan panel ---------- */
+        .side { display: flex; flex-direction: column; gap: 16px; }
+        .panel { padding: 18px; }
+        .panel-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 12px;
         }
-        button:hover { background: #1f6da0; }
-        #connection {
-            margin-top: 8px;
+        .panel-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 0;
             font-size: 12px;
-            color: #888;
+            font-weight: 700;
+            letter-spacing: .06em;
+            text-transform: uppercase;
+            color: var(--muted);
+        }
+        .panel-title svg { width: 16px; height: 16px; color: var(--accent); }
+
+        #startBtn { width: 100%; height: 46px; font-size: 15px; }
+        #startBtn::before { content: "▶"; font-size: 11px; }
+        #status {
+            margin-top: 14px;
+            min-height: 42px;
+            font-size: 14px;
+            line-height: 1.5;
+            color: var(--text);
+        }
+
+        /* Fuzzy kartı: data-state = idle | ok | alert */
+        #fuzzyBadge[data-state="ok"] { color: var(--success); background: var(--success-soft); border-color: transparent; }
+        #fuzzyBadge[data-state="alert"] { color: var(--danger); background: var(--danger-soft); border-color: transparent; }
+        #fuzzy {
+            min-height: 22px;
+            font-family: var(--mono);
+            font-size: 12.5px;
+            line-height: 1.6;
+            color: var(--text-2);
+        }
+        #fuzzy[data-state="idle"] { font-family: var(--font); color: var(--muted); }
+
+        /* Telemetriya */
+        .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .stat { padding: 12px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--border); min-width: 0; }
+        .stat .k { font-size: 11.5px; color: var(--muted); }
+        .stat .v { margin-top: 2px; font-size: 20px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+        .stat .v small { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: 0; }
+
+        /* Planlaşdırıcı */
+        #plannerName { color: var(--accent); background: var(--accent-soft); border-color: transparent; }
+        #plannerEvent {
+            margin-bottom: 12px;
+            padding: 10px 12px;
+            border-radius: 10px;
+            font-size: 13px;
+            color: var(--text);
+            background: var(--accent-soft);
+            border-left: 3px solid var(--accent);
+        }
+        #plannerEvent:empty { display: none; }
+        .cmp { display: flex; flex-direction: column; gap: 12px; }
+        .cmp-row .cmp-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
+        .cmp-row .cmp-head b { color: var(--text-2); font-weight: 600; }
+        .save { color: var(--success); font-weight: 700; font-variant-numeric: tabular-nums; }
+        .bar { display: grid; grid-template-columns: 56px 1fr 44px; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+        .bar + .bar { margin-top: 4px; }
+        .bar .track { height: 6px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
+        .bar .fill { height: 100%; border-radius: 3px; transition: width .35s ease; }
+        .bar .fill.d { background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+        .bar .fill.a { background: var(--muted); opacity: .55; }
+        .bar .n { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-2); }
+        .muted-note { font-size: 13px; color: var(--muted); }
+
+        /* Legend */
+        .legend { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; margin: 0; padding: 0; list-style: none; font-size: 12.5px; color: var(--text-2); }
+        .legend li { display: flex; align-items: center; gap: 8px; min-width: 0; }
+        .sw { flex: none; width: 14px; height: 14px; border-radius: 4px; }
+        .sw.robot { border-radius: 50%; background: var(--c-robot); }
+        .sw.mover { border-radius: 50%; background: var(--c-mover); }
+        .sw.shelf { background: var(--c-shelf); }
+        .sw.forklift { background: var(--c-forklift); }
+        .sw.box { background: var(--c-box); }
+        .sw.goal { background: var(--c-goal); }
+        .sw.fog { background: var(--c-fog); border: 1px solid var(--border-strong); }
+        .sw.path { height: 0; border-radius: 0; border-top: 2px dashed var(--c-path); }
+        .sw.trail { height: 3px; border-radius: 2px; background: var(--c-trail); }
+
+        @media (max-width: 1100px) {
+            .layout { grid-template-columns: 1fr; }
+            .side { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            canvas { max-height: none; }
+        }
+        @media (max-width: 720px) {
+            .app { padding: 16px; gap: 16px; }
+            .side { grid-template-columns: 1fr; }
+            .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .stage { padding: 10px; }
+            .brand p { display: none; }
         }
     </style>
 </head>
 <body>
-    <button onclick="logout()" style="position:absolute;top:12px;right:16px;margin:0;padding:6px 14px;font-size:13px;background:#7a6e5a">Çıxış</button>
-    <h1>Anbar Robotu — A* / D* Lite Yol Tapma Simulyasiyası <small style="font-size:11px;color:#888">v25 · Hər girişin öz simulyasiyası, "Başlat" gözlənilir</small></h1>
-    <canvas id="grid" width="720" height="640"></canvas>
-    <div id="status">Simulyasiya yüklənir...</div>
-    <div id="fuzzy"></div>
-    <div id="planner"></div>
-    <button id="startBtn" onclick="startSimulation()" disabled>Başlat</button>
-    <div id="connection">Bağlantı gözlənilir...</div>
+<div class="app">
+    <header class="topbar">
+        <div class="brand">
+            <div class="brand-mark">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="11" rx="3"/><path d="M12 8V4M9 13h.01M15 13h.01M2 13v2M22 13v2"/></svg>
+            </div>
+            <div>
+                <h1>Anbar Robotu</h1>
+                <p>Avtonom naviqasiya simulyasiyası</p>
+            </div>
+        </div>
+        <span class="chip" title="Versiya">v34</span>
+        <div id="connection" class="chip" data-state="pending"><span class="dot"></span><span id="connText">Qoşulur...</span></div>
+        <button type="button" class="btn btn-ghost icon-btn theme-toggle" onclick="toggleTheme()" title="Temanı dəyiş" aria-label="Temanı dəyiş">
+            <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+            <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+        </button>
+        <button type="button" class="btn btn-ghost" onclick="logout()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+            Çıxış
+        </button>
+    </header>
+
+    <main class="layout">
+        <section class="card stage">
+            <ol class="steps" id="steps">
+                <li class="step" data-state="todo"><span class="num"><span>1</span></span><span class="label"><span class="title">Maneəsiz yol</span><span class="desc">A* · fuzzy operator</span></span></li>
+                <li class="step" data-state="todo"><span class="num"><span>2</span></span><span class="label"><span class="title">Qəfil maneələr</span><span class="desc">D* Lite · V2V</span></span></li>
+                <li class="step" data-state="todo"><span class="num"><span>3</span></span><span class="label"><span class="title">LiDAR kəşfi</span><span class="desc">naməlum xəritə</span></span></li>
+                <li class="step" data-state="todo"><span class="num"><span>4</span></span><span class="label"><span class="title">Bağlı yol</span><span class="desc">yol yoxdur sübutu</span></span></li>
+            </ol>
+            <div class="canvas-wrap">
+                <canvas id="grid" width="720" height="610"></canvas>
+                <div class="stage-empty" id="stageEmpty">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-6 9 6v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="M8 21v-8h8v8"/></svg>
+                    <div>Anbar xəritəsi simulyasiya başlayanda görünəcək</div>
+                </div>
+            </div>
+        </section>
+
+        <aside class="side">
+            <section class="card panel">
+                <div class="panel-head">
+                    <h2 class="panel-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M10 8l6 4-6 4z"/></svg>
+                        İdarəetmə
+                    </h2>
+                </div>
+                <button id="startBtn" class="btn btn-primary" onclick="startSimulation()" disabled>Başlat</button>
+                <div id="status" aria-live="polite">Simulyasiya yüklənir...</div>
+            </section>
+
+            <section class="card panel">
+                <div class="panel-head">
+                    <h2 class="panel-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0-6 6c0 2.2 1.2 3.6 2.4 4.8.9.9 1.6 1.9 1.6 3.2h4c0-1.3.7-2.3 1.6-3.2C16.8 12.6 18 11.2 18 9a6 6 0 0 0-6-6zM10 21h4"/></svg>
+                        Fuzzy qərar
+                    </h2>
+                    <span class="chip" id="fuzzyBadge" data-state="idle">gözləmə</span>
+                </div>
+                <div id="fuzzy" data-state="idle">Hələ qərar yoxdur</div>
+            </section>
+
+            <section class="card panel">
+                <div class="panel-head">
+                    <h2 class="panel-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>
+                        Telemetriya
+                    </h2>
+                </div>
+                <div class="stats">
+                    <div class="stat"><div class="k">Yük</div><div class="v" id="telCarry">—</div></div>
+                    <div class="stat"><div class="k">Atılan addım</div><div class="v" id="telSteps">—</div></div>
+                    <div class="stat"><div class="k">Qalan yol</div><div class="v" id="telPlan">—</div></div>
+                    <div class="stat"><div class="k">LiDAR kəşfi</div><div class="v" id="telDiscovered">—</div></div>
+                </div>
+            </section>
+
+            <section class="card panel">
+                <div class="panel-head">
+                    <h2 class="panel-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/></svg>
+                        Planlaşdırıcı
+                    </h2>
+                    <span class="chip" id="plannerName">—</span>
+                </div>
+                <div id="planner"></div>
+            </section>
+
+            <section class="card panel">
+                <div class="panel-head">
+                    <h2 class="panel-title">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+                        İşarələr
+                    </h2>
+                </div>
+                <ul class="legend">
+                    <li><span class="sw robot"></span>Bizim robot</li>
+                    <li><span class="sw mover"></span>Hərəkətli robot</li>
+                    <li><span class="sw shelf"></span>Rəf</li>
+                    <li><span class="sw forklift"></span>Maneə (forklift)</li>
+                    <li><span class="sw box"></span>Qutu</li>
+                    <li><span class="sw goal"></span>Hədəf</li>
+                    <li><span class="sw path"></span>Planlanan yol</li>
+                    <li><span class="sw trail"></span>Keçilən iz</li>
+                    <li><span class="sw fog"></span>Kəşf olunmayıb</li>
+                </ul>
+            </section>
+        </aside>
+    </main>
+</div>
 
 <script>
 const canvas = document.getElementById('grid');
 const ctx = canvas.getContext('2d');
 const statusEl = document.getElementById('status');
 const fuzzyEl = document.getElementById('fuzzy');
+const fuzzyBadge = document.getElementById('fuzzyBadge');
 const plannerEl = document.getElementById('planner');
+const plannerNameEl = document.getElementById('plannerName');
 const connEl = document.getElementById('connection');
+const connText = document.getElementById('connText');
+const stageEmpty = document.getElementById('stageEmpty');
+const stepEls = Array.from(document.querySelectorAll('#steps .step'));
 
 let ws;
 let state = null;
 let simulationId = null; // bu səhifənin simulyasiyası: server qoşulanda verir ("hello"), "Başlat" onu göndərir
 const CELL = 55;
 const MARGIN = 30;
+const FONT = '"Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif';
 
 // ==================== Giriş (JWT) ====================
 // Token login.html-dən sessionStorage ilə ötürülür və dərhal oradan silinir — yalnız bu səhifənin
@@ -116,6 +407,12 @@ function logout() {
 
 if (!getToken()) goLogin();
 
+// Login səhifəsindən yeni gəlinibsə: bir dəfəlik "uğurla daxil oldunuz" bildirişi
+if (sessionStorage.getItem('loginToast')) {
+    sessionStorage.removeItem('loginToast');
+    toast({ type: 'success', title: 'Uğurla daxil oldunuz', message: 'Xoş gəlmisiniz! Simulyasiyanı "Başlat" ilə işə salın.', duration: 2000 });
+}
+
 function connectWS() {
     const token = getToken();
     if (!token) { goLogin(); return; }
@@ -126,8 +423,8 @@ function connectWS() {
 
     ws.onopen = () => {
         // "bağlı" həm "qoşulub", həm də "qapalı" kimi oxunur — ona görə birmənalı yazılır
-        connEl.textContent = '🟢 Serverə qoşulub (WebSocket aktivdir)';
-        connEl.style.color = '#27ae60';
+        connEl.dataset.state = 'online';
+        connText.textContent = 'Canlı';
     };
 
     ws.onmessage = (e) => {
@@ -142,23 +439,82 @@ function connectWS() {
         }
         state = message;
         onRobotState(state);
-        statusEl.textContent = state.status;
-        if (state.fuzzyInfo) {
-            fuzzyEl.textContent = state.fuzzyInfo;
-            fuzzyEl.style.color = state.fuzzyAlert ? '#c81e1e' : '#146e3c';
-        } else {
-            fuzzyEl.textContent = '';
-        }
-        plannerEl.textContent = plannerText(state.planner);
+        renderPanels(state);
     };
 
     ws.onclose = () => {
         simulationId = null;
         startBtn.disabled = true;
-        connEl.textContent = '🔴 Serverlə əlaqə kəsildi. Yenidən qoşulur...';
-        connEl.style.color = '#e74c3c';
+        connEl.dataset.state = 'offline';
+        connText.textContent = 'Bağlantı yoxdur · yenidən qoşulur...';
         setTimeout(connectWS, 2000);
     };
+}
+
+// ==================== Yan panellər (yalnız göstəriş) ====================
+// Hamısı serverin göndərdiyi vəziyyətdən oxunur, heç biri simulyasiyaya təsir etmir.
+
+function renderPanels(s) {
+    stageEmpty.hidden = true;
+
+    // Status serverdən "SSENARİ n: ..." kimi gəlir: nömrə addımlar zolağında göstərilir
+    const m = /^SSENARİ (\d+):\s*/.exec(s.status || '');
+    statusEl.textContent = m ? s.status.slice(m[0].length) : s.status;
+    updateSteps(m ? Number(m[1]) : 0, s.status || '');
+
+    if (s.fuzzyInfo) {
+        fuzzyEl.textContent = s.fuzzyInfo.replace(/^🧠\s*/, '');
+        fuzzyEl.dataset.state = s.fuzzyAlert ? 'alert' : 'ok';
+        fuzzyBadge.dataset.state = s.fuzzyAlert ? 'alert' : 'ok';
+        fuzzyBadge.textContent = s.fuzzyAlert ? 'diqqət' : 'normal';
+    } else {
+        fuzzyEl.textContent = 'Hələ qərar yoxdur';
+        fuzzyEl.dataset.state = 'idle';
+        fuzzyBadge.dataset.state = 'idle';
+        fuzzyBadge.textContent = 'gözləmə';
+    }
+
+    setStat('telCarry', s.carrying ? s.boxCount : 'Boş', s.carrying ? 'qutu' : '');
+    setStat('telSteps', Math.max(0, s.trail.length - 1), 'xana');
+    setStat('telPlan', s.plan ? Math.max(0, s.plan.length - 1) : '—', s.plan ? 'xana' : '');
+    if (s.hasLidar && s.discovered) {
+        setStat('telDiscovered', Math.round(100 * s.discovered.length / (s.rows * s.cols)), '%');
+    } else {
+        setStat('telDiscovered', '—', 'yoxdur');
+    }
+
+    renderPlanner(s.planner);
+}
+
+function setStat(id, value, unit) {
+    const el = document.getElementById(id);
+    el.textContent = value;
+    if (unit) {
+        const small = document.createElement('small');
+        small.textContent = ' ' + unit;
+        el.appendChild(small);
+    }
+}
+
+/** Ssenari addımları: keçmişdəkilər "tamam", cari "aktiv"; ssenari bitibsə (TAMAM / YOL YOXDUR) o da tamam. */
+const announcedSteps = new Set();   // tamamlanması artıq bildirilmiş ssenarilər (hər biri bir dəfə)
+
+function updateSteps(current, status) {
+    const finished = /TAMAM|YOL YOXDUR/.test(status);
+    stepEls.forEach((el, i) => {
+        const n = i + 1;
+        el.dataset.state = n < current || (n === current && finished) ? 'done'
+            : n === current ? 'active' : 'todo';
+    });
+    if (finished && current && !announcedSteps.has(current)) {
+        announcedSteps.add(current);
+        const title = stepEls[current - 1].querySelector('.title').textContent;
+        toast({
+            type: 'success',
+            title: 'Ssenari ' + current + ' tamamlandı',
+            message: current === 4 ? title + ' — bütün ssenarilər bitdi.' : title + ' uğurla başa çatdı.'
+        });
+    }
 }
 
 /**
@@ -166,19 +522,63 @@ function connectWS() {
  * İlk plan və yenilənmələr ayrı göstərilir: D* Lite ilk planda (geriyə axtarış) A*-dan çox iş görür,
  * yenilənmələrdə isə əvvəlki hesablamanı saxladığı üçün az — onun üstünlüyü məhz buradadır.
  */
-function plannerText(p) {
-    if (!p) return '';
-    if (p.name !== 'D* Lite') return '🧭 Planlaşdırıcı: ' + p.name + ' (hər dəfə sıfırdan axtarış)';
-    let text = '🧭 D* Lite | son: ' + p.lastDstar + ' xana (A* olsaydı ' + p.lastAstar + ')'
-        + ' | ilk plan ×' + p.initCount + ': ' + p.initDstar + ' vs A* ' + p.initAstar;
-    if (p.updCount > 0) {
-        text += ' | yenilənmə ×' + p.updCount + ': ' + p.updDstar + ' vs A* ' + p.updAstar;
-        if (p.updAstar > 0 && p.updDstar < p.updAstar) {
-            text += ' → ' + Math.round(100 * (1 - p.updDstar / p.updAstar)) + '% az iş';
-        }
+function renderPlanner(p) {
+    plannerEl.replaceChildren();
+    if (!p) { plannerNameEl.textContent = '—'; return; }
+    plannerNameEl.textContent = p.name;
+    if (p.name !== 'D* Lite') {
+        plannerEl.appendChild(textEl('div', 'muted-note', 'Hər dəfə sıfırdan axtarış (qlobal planlaşdırıcı). Mühit dəyişəndə D* Lite işə düşür.'));
+        return;
     }
-    // Son D* Lite hadisəsi (məs. "hərəkət edən robot yolu kəsdi — yol yeniləndi") ayrıca sətirdə
-    return p.event ? p.event + '\n' + text : text;
+    // Son D* Lite hadisəsi (məs. "hərəkət edən robot yolu kəsdi — yol yeniləndi")
+    const event = textEl('div', '', p.event ? p.event.replace(/^🧭\s*/, '') : '');
+    event.id = 'plannerEvent';
+    plannerEl.appendChild(event);
+
+    const cmp = textEl('div', 'cmp', '');
+    cmp.appendChild(compareRow('Son planlaşdırma', '', p.lastDstar, p.lastAstar));
+    cmp.appendChild(compareRow('İlk plan', '×' + p.initCount, p.initDstar, p.initAstar));
+    if (p.updCount > 0) {
+        cmp.appendChild(compareRow('Yenilənmələr', '×' + p.updCount, p.updDstar, p.updAstar, true));
+    }
+    plannerEl.appendChild(cmp);
+}
+
+/** Bir müqayisə sətri: D* Lite və A*-ın açdığı xana sayı üfüqi zolaqlarla. */
+function compareRow(title, count, dstar, astar, showSaving) {
+    const row = textEl('div', 'cmp-row', '');
+    const head = textEl('div', 'cmp-head', '');
+    const left = textEl('span', '', '');
+    left.appendChild(textEl('b', '', title));
+    if (count) left.appendChild(document.createTextNode(' ' + count));
+    head.appendChild(left);
+    if (showSaving && astar > 0 && dstar < astar) {
+        head.appendChild(textEl('span', 'save', '−' + Math.round(100 * (1 - dstar / astar)) + '% iş'));
+    }
+    row.appendChild(head);
+    const max = Math.max(dstar, astar, 1);
+    row.appendChild(bar('D* Lite', dstar, max, 'd'));
+    row.appendChild(bar('A*', astar, max, 'a'));
+    return row;
+}
+
+function bar(label, value, max, kind) {
+    const el = textEl('div', 'bar', '');
+    el.appendChild(textEl('span', '', label));
+    const track = textEl('div', 'track', '');
+    const fill = textEl('div', 'fill ' + kind, '');
+    fill.style.width = (100 * value / max).toFixed(1) + '%';
+    track.appendChild(fill);
+    el.appendChild(track);
+    el.appendChild(textEl('span', 'n', String(value)));
+    return el;
+}
+
+function textEl(tag, className, text) {
+    const el = document.createElement(tag);
+    if (className) el.className = className;
+    if (text) el.textContent = text;
+    return el;
 }
 
 // Limiti server müəyyən edir (app.rate-limit start qaydası: 4 basış, sonra 5 san blok — girişdəki kimi).
@@ -226,6 +626,8 @@ function startSimulation() {
         return r.json();
     }).then(() => {
         statusEl.textContent = 'Simulyasiya başladı...';
+        announcedSteps.clear();   // yeni simulyasiya: ssenari bildirişləri yenidən göstərilsin
+        toast({ type: 'success', title: 'Simulyasiya başladı', message: 'Robot 4 ssenarini ardıcıl icra edəcək.' });
     }).catch(err => {
         statusEl.textContent = '⏳ ' + err.message;
     });
@@ -343,16 +745,45 @@ function frame(now) {
     }
 }
 
+// ==================== Çəkiliş (yalnız görünüş) ====================
+// Xəritənin rəngləri temaya görə (bax: js/theme.js). rgb üçlükləri şəffaflıqla işlədilir: 'rgba(' + P.path + ',0.8)'.
+const PALETTES = {
+    dark: {
+        bg: '#0b1120', tileA: '#152036', tileB: '#131c30', frame: 'rgba(148,163,184,0.25)',
+        fog: '#080d19', fogMark: 'rgba(148,163,184,0.22)', axis: 'rgba(148,163,184,0.5)',
+        shelf: '#334155', shelfTop: '#3f4d63', shelfRail: '#55657d', shelfCrate: '#b07d3e', shelfLabel: 'rgba(226,232,240,0.75)',
+        forklift: '#ef4444', forkliftDark: '#991b1b',
+        box: '#c98a3d', boxEdge: '#8a5a22',
+        goal: '34,197,94', path: '56,189,248', trail: '34,197,94', lidar: '56,189,248',
+        reflection: '#f43f5e', reflectionRing: '#0b1120'
+    },
+    light: {
+        bg: '#dfe5ee', tileA: '#f8fafc', tileB: '#f1f4f8', frame: 'rgba(15,23,42,0.18)',
+        fog: '#c3ccda', fogMark: 'rgba(15,23,42,0.28)', axis: 'rgba(15,23,42,0.45)',
+        shelf: '#64748b', shelfTop: '#738399', shelfRail: '#8f9db1', shelfCrate: '#c08a45', shelfLabel: 'rgba(255,255,255,0.9)',
+        forklift: '#ef4444', forkliftDark: '#b91c1c',
+        box: '#c98a3d', boxEdge: '#8a5a22',
+        goal: '22,163,74', path: '37,99,235', trail: '22,163,74', lidar: '14,165,233',
+        reflection: '#e11d48', reflectionRing: '#ffffff'
+    }
+};
+let P = PALETTES.dark;
+
 function draw() {
     if (!state) return;
+    P = PALETTES[currentTheme()] || PALETTES.dark;
     const rows = state.rows, cols = state.cols;
     const w = cols * CELL + 2 * MARGIN, h = rows * CELL + 2 * MARGIN;
-    // Ölçünü yalnız dəyişəndə təyin et (canvas.width təyini hər kadrda bahalıdır)
-    if (canvas.width !== w) canvas.width = w;
-    if (canvas.height !== h) canvas.height = h;
+    // Retina/4K ekranda kəskin görünsün: daxili ölçü piksel sıxlığına vurulur, çəkiliş isə məntiqi
+    // vahidlərdə qalır. Ölçünü yalnız dəyişəndə təyin et (canvas.width təyini hər kadrda bahalıdır)
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    const pw = Math.round(w * dpr), ph = Math.round(h * dpr);
+    if (canvas.width !== pw) canvas.width = pw;
+    if (canvas.height !== ph) canvas.height = ph;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    ctx.fillStyle = '#d2c8b4';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = P.bg;
+    ctx.fillRect(0, 0, w, h);
 
     // Lidar discovered set
     const discoveredSet = new Set();
@@ -360,34 +791,38 @@ function draw() {
         for (const d of state.discovered) discoveredSet.add(d.row + ',' + d.col);
     }
 
-    // Döşəmə
+    // Koordinatlar (sütun yuxarıda, sətir solda)
+    ctx.fillStyle = P.axis;
+    ctx.font = '600 10px ' + FONT;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (let c = 0; c < cols; c++) ctx.fillText(String(c), MARGIN + c * CELL + CELL / 2, MARGIN / 2);
+    for (let r = 0; r < rows; r++) ctx.fillText(String(r), MARGIN / 2, MARGIN + r * CELL + CELL / 2);
+
+    // Döşəmə: xanalar arasında nazik boşluq — müasir "kafel" görünüşü
     for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
             const x = MARGIN + c * CELL, y = MARGIN + r * CELL;
             if (state.hasLidar && !discoveredSet.has(r + ',' + c)) {
-                ctx.fillStyle = '#37322d';
-                ctx.fillRect(x, y, CELL, CELL);
-                ctx.strokeStyle = '#4b463f';
-                ctx.strokeRect(x, y, CELL, CELL);
-                ctx.fillStyle = '#645f55';
-                ctx.font = 'bold 14px sans-serif';
+                ctx.fillStyle = P.fog;
+                roundRect(x + 1.5, y + 1.5, CELL - 3, CELL - 3, 7);
+                ctx.fillStyle = P.fogMark;
+                ctx.font = '600 13px ' + FONT;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
                 ctx.fillText('?', x + CELL/2, y + CELL/2);
             } else {
-                ctx.fillStyle = (r + c) % 2 === 0 ? '#d2c8b4' : '#c8beaa';
-                ctx.fillRect(x, y, CELL, CELL);
-                ctx.strokeStyle = '#b9af9b';
-                ctx.strokeRect(x, y, CELL, CELL);
+                ctx.fillStyle = (r + c) % 2 === 0 ? P.tileA : P.tileB;
+                roundRect(x + 1.5, y + 1.5, CELL - 3, CELL - 3, 7);
             }
         }
     }
 
     // Çərçivə
-    ctx.strokeStyle = '#5a5040';
-    ctx.lineWidth = 3;
-    ctx.strokeRect(MARGIN, MARGIN, cols * CELL, rows * CELL);
+    ctx.strokeStyle = P.frame;
     ctx.lineWidth = 1;
+    roundRectPath(MARGIN - 3, MARGIN - 3, cols * CELL + 6, rows * CELL + 6, 12);
+    ctx.stroke();
 
     // Obyektlər
     for (const obj of state.objects) {
@@ -395,33 +830,52 @@ function draw() {
         const cx = x + CELL / 2, cy = y + CELL / 2;
 
         if (obj.type === 'SHELF') {
-            ctx.fillStyle = '#505a6e';
-            ctx.fillRect(x + 3, y + 3, CELL - 6, CELL - 6);
-            ctx.strokeStyle = '#64708a';
+            ctx.fillStyle = P.shelf;
+            roundRect(x + 4, y + 4, CELL - 8, CELL - 8, 7);
+            ctx.fillStyle = P.shelfTop;
+            roundRect(x + 4, y + 4, CELL - 8, 10, 7);
+            ctx.strokeStyle = P.shelfRail;
+            ctx.lineWidth = 1;
             const h = CELL / 3;
             ctx.beginPath();
-            ctx.moveTo(x + 5, y + h); ctx.lineTo(x + CELL - 5, y + h);
-            ctx.moveTo(x + 5, y + 2*h); ctx.lineTo(x + CELL - 5, y + 2*h);
+            ctx.moveTo(x + 8, y + h + 2); ctx.lineTo(x + CELL - 8, y + h + 2);
+            ctx.moveTo(x + 8, y + 2*h); ctx.lineTo(x + CELL - 8, y + 2*h);
             ctx.stroke();
-            ctx.fillStyle = '#a58c5f';
-            ctx.fillRect(x + 6, y + 5, 9, 7);
-            ctx.fillRect(x + 17, y + 5, 9, 7);
-            drawLabel(cx, cy + h, 'RƏF', 7);
+            ctx.fillStyle = P.shelfCrate;
+            roundRect(x + 9, y + h + 4, 9, 7, 2);
+            roundRect(x + 20, y + h + 4, 9, 7, 2);
+            drawLabel(cx, cy + h - 2, 'RƏF', 7, P.shelfLabel);
         } else if (obj.type === 'FORKLIFT') {
-            ctx.fillStyle = '#c0392b';
-            roundRect(x + 4, y + 4, CELL - 8, CELL - 8, 5);
-            drawLabel(cx, cy, 'M', 9);
+            // Qırmızı maneə: yumşaq parıltı + xəbərdarlıq zolaqları
+            ctx.fillStyle = 'rgba(239,68,68,0.18)';
+            roundRect(x + 2, y + 2, CELL - 4, CELL - 4, 10);
+            ctx.fillStyle = P.forklift;
+            roundRect(x + 6, y + 6, CELL - 12, CELL - 12, 8);
+            ctx.save();
+            roundRectPath(x + 6, y + 6, CELL - 12, CELL - 12, 8);
+            ctx.clip();
+            ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+            ctx.lineWidth = 4;
+            for (let k = -CELL; k < CELL; k += 10) {
+                ctx.beginPath();
+                ctx.moveTo(x + k, y + CELL);
+                ctx.lineTo(x + k + CELL, y);
+                ctx.stroke();
+            }
+            ctx.restore();
+            drawLabel(cx, cy, 'M', 12);
         } else if (obj.type === 'MOVING_ROBOT') {
             // Hərəkət edən maneə robot kimi, hamar mövqedə ayrıca çəkilir (bax: drawMovingRobot)
         } else if (obj.type === 'PACKAGE') {
             for (let i = obj.count - 1; i >= 0; i--) {
                 const bx = x + 10 + i * 2, by = y + 12 - i * 6;
-                ctx.fillStyle = '#a0783c';
+                ctx.fillStyle = P.box;
                 roundRect(bx, by, CELL - 22, 11, 3);
-                ctx.strokeStyle = '#825f28';
-                ctx.strokeRect(bx, by, CELL - 22, 11);
+                ctx.strokeStyle = P.boxEdge;
+                ctx.lineWidth = 1;
+                ctx.stroke();
             }
-            if (obj.count > 1) drawLabel(cx, cy + 6, 'x' + obj.count, 8);
+            if (obj.count > 1) drawLabel(cx, cy + 10, '×' + obj.count, 9, P.axis);
         }
     }
 
@@ -434,10 +888,12 @@ function draw() {
     // bilmir, sadəcə boş fərz edir (D* Lite-ın "boş fəza fərziyyəsi") — kəşf etdikcə yol düzəlir.
     if (state.plan && state.plan.length > 1) {
         const isDstar = state.planner && state.planner.name === 'D* Lite';
-        const known = 'rgba(41, 128, 185, ' + (isDstar ? 0.85 : 0.45) + ')';
-        const assumed = 'rgba(41, 128, 185, 0.25)';
+        const known = 'rgba(' + P.path + ', ' + (isDstar ? 0.9 : 0.55) + ')';
+        const assumed = 'rgba(' + P.path + ', 0.28)';
         ctx.lineWidth = 2;
-        ctx.setLineDash([6, 5]);
+        ctx.lineCap = 'round';
+        ctx.setLineDash([6, 6]);
+        ctx.lineDashOffset = -(performance.now() / 40) % 12;   // yol hərəkət istiqamətində "axır"
         let px = rx, py = ry;
         for (let i = 1; i < state.plan.length; i++) {
             const p = state.plan[i];
@@ -450,15 +906,17 @@ function draw() {
             px = x; py = y;
         }
         ctx.setLineDash([]);
+        ctx.lineDashOffset = 0;
         ctx.lineWidth = 1;
     }
 
     // İz: son nöqtə robotun hazırkı xanasıdır, onu robotun ekrandakı yeri ilə əvəz edirik
     // ki, xətt robotdan qabağa qaçmasın
     if (state.trail.length > 1) {
-        ctx.strokeStyle = 'rgba(46,204,113,0.5)';
-        ctx.lineWidth = 3;
+        ctx.strokeStyle = 'rgba(' + P.trail + ',0.55)';
+        ctx.lineWidth = 3.5;
         ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
         ctx.beginPath();
         for (let i = 0; i < state.trail.length - 1; i++) {
             const t = state.trail[i];
@@ -471,21 +929,24 @@ function draw() {
         ctx.stroke();
         ctx.lineWidth = 1;
 
+        ctx.fillStyle = 'rgba(' + P.trail + ',0.85)';
         for (const t of state.trail.slice(0, -1)) {
-            ctx.fillStyle = 'rgba(39,174,96,0.6)';
             ctx.beginPath();
-            ctx.arc(MARGIN + t.col * CELL + CELL/2, MARGIN + t.row * CELL + CELL/2, 3, 0, Math.PI*2);
+            ctx.arc(MARGIN + t.col * CELL + CELL/2, MARGIN + t.row * CELL + CELL/2, 2.5, 0, Math.PI*2);
             ctx.fill();
         }
     }
 
-    // Hədəf
+    // Hədəf: yumşaq döyünən halqa
     const gx = MARGIN + state.goal.col * CELL + CELL/2;
     const gy = MARGIN + state.goal.row * CELL + CELL/2;
     const s = CELL / 3;
-    ctx.fillStyle = '#27ae60';
-    roundRect(gx - s, gy - s, 2*s, 2*s, 4);
-    drawLabel(gx, gy, 'HƏDƏF', 10);
+    const pulse = (Math.sin(performance.now() / 450) + 1) / 2;
+    ctx.fillStyle = 'rgba(' + P.goal + ',' + (0.12 + 0.12 * pulse).toFixed(3) + ')';
+    roundRect(gx - s - 6 - 2 * pulse, gy - s - 6 - 2 * pulse, 2 * s + 12 + 4 * pulse, 2 * s + 12 + 4 * pulse, 12);
+    ctx.fillStyle = 'rgb(' + P.goal + ')';
+    roundRect(gx - s, gy - s, 2*s, 2*s, 8);
+    drawLabel(gx, gy, 'HƏDƏF', 9);
 
     if (mover.x !== null) {
         ctx.save();
@@ -512,57 +973,57 @@ function draw() {
  */
 function drawRobot(cx, cy, carrying, boxCount) {
     // Kölgə (dairəvi: fırlanmadan asılı deyil)
-    ctx.fillStyle = 'rgba(0,0,0,0.15)';
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
     ctx.beginPath();
-    ctx.arc(cx + 2, cy + 2, 15, 0, Math.PI * 2);
+    ctx.arc(cx + 2, cy + 3, 15, 0, Math.PI * 2);
     ctx.fill();
 
     // Təkərlər: hər tərəfdə ikisi
-    ctx.fillStyle = '#32373c';
+    ctx.fillStyle = '#1e293b';
     for (const sx of [-1, 1]) {
         roundRect(cx + sx * 13 - 3, cy - 10, 6, 7, 2);
         roundRect(cx + sx * 13 - 3, cy + 3, 6, 7, 2);
     }
 
     // Gövdə — metal
-    ctx.fillStyle = '#5a6473';
-    roundRect(cx - 11, cy - 12, 22, 24, 5);
-    ctx.fillStyle = '#6e7887';
+    ctx.fillStyle = '#475569';
+    roundRect(cx - 11, cy - 12, 22, 24, 6);
+    ctx.fillStyle = '#64748b';
     roundRect(cx - 8, cy - 8, 16, 17, 4);
 
     // Ön sensor paneli (vizor) — robotun hansı tərəfə baxdığı buradan görünür
-    ctx.fillStyle = '#3498db';
+    ctx.fillStyle = '#2563eb';
     roundRect(cx - 8, cy - 12, 16, 4, 2);
-    ctx.fillStyle = '#00e6ff';
+    ctx.fillStyle = '#67e8f9';
     ctx.beginPath(); ctx.arc(cx - 4, cy - 10, 1.5, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath(); ctx.arc(cx + 4, cy - 10, 1.5, 0, Math.PI * 2); ctx.fill();
 
     // LiDAR qübbəsi (mərkəzdə)
-    ctx.fillStyle = '#4b5564';
+    ctx.fillStyle = '#334155';
     ctx.beginPath(); ctx.arc(cx, cy + 1, 4.5, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#00e6ff';
+    ctx.fillStyle = '#67e8f9';
     ctx.beginPath(); ctx.arc(cx, cy - 1, 1.5, 0, Math.PI * 2); ctx.fill();
 
     // Arxa LED-lər
-    ctx.fillStyle = '#2ecc71';
+    ctx.fillStyle = '#22c55e';
     ctx.beginPath(); ctx.arc(cx - 6, cy + 9, 1.8, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#e74c3c';
+    ctx.fillStyle = '#ef4444';
     ctx.beginPath(); ctx.arc(cx + 6, cy + 9, 1.8, 0, Math.PI * 2); ctx.fill();
 
     // Ön qısqaclar (çəngəllər)
-    ctx.strokeStyle = '#464f5a';
+    ctx.strokeStyle = '#334155';
     ctx.lineWidth = 2;
     ctx.lineCap = 'round';
     if (carrying && boxCount > 0) {
         // Qutu robotun önündə, qısqaclar onu yanlardan sıxır
         for (let i = 0; i < boxCount; i++) {
-            ctx.fillStyle = '#a0783c';
+            ctx.fillStyle = '#c98a3d';
             roundRect(cx - 7, cy - 22 - i * 3, 14, 9, 2);
-            ctx.strokeStyle = '#825f28';
+            ctx.strokeStyle = '#8a5a22';
             ctx.lineWidth = 1;
-            ctx.strokeRect(cx - 7, cy - 22 - i * 3, 14, 9);
+            ctx.stroke();
         }
-        ctx.strokeStyle = '#464f5a';
+        ctx.strokeStyle = '#334155';
         ctx.lineWidth = 2;
         ctx.beginPath(); ctx.moveTo(cx - 8, cy - 12); ctx.lineTo(cx - 9, cy - 22); ctx.stroke();
         ctx.beginPath(); ctx.moveTo(cx + 8, cy - 12); ctx.lineTo(cx + 9, cy - 22); ctx.stroke();
@@ -581,22 +1042,22 @@ function drawRobot(cx, cy, carrying, boxCount) {
  */
 function drawMovingRobot() {
     // Kölgə
-    ctx.fillStyle = 'rgba(0,0,0,0.15)';
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
     ctx.beginPath();
-    ctx.arc(2, 2, 17, 0, Math.PI * 2);
+    ctx.arc(2, 3, 17, 0, Math.PI * 2);
     ctx.fill();
 
     // Təkərlər
-    ctx.fillStyle = '#2c2c2c';
+    ctx.fillStyle = '#1f2937';
     for (const sx of [-1, 1]) {
         roundRect(sx * 15 - 3, -11, 6, 8, 2);
         roundRect(sx * 15 - 3, 3, 6, 8, 2);
     }
 
     // Gövdə — sarı sənaye rəngi
-    ctx.fillStyle = '#f1c40f';
-    roundRect(-13, -14, 26, 28, 6);
-    ctx.strokeStyle = '#b7950b';
+    ctx.fillStyle = '#eab308';
+    roundRect(-13, -14, 26, 28, 7);
+    ctx.strokeStyle = '#a16207';
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
@@ -605,9 +1066,9 @@ function drawMovingRobot() {
     ctx.beginPath();
     ctx.rect(-9, -6, 18, 15);
     ctx.clip();
-    ctx.fillStyle = '#2c2c2c';
+    ctx.fillStyle = '#1f2937';
     ctx.fillRect(-9, -6, 18, 15);
-    ctx.strokeStyle = '#f1c40f';
+    ctx.strokeStyle = '#eab308';
     ctx.lineWidth = 2.5;
     for (let k = -24; k < 24; k += 6) {
         ctx.beginPath();
@@ -618,7 +1079,7 @@ function drawMovingRobot() {
     ctx.restore();
 
     // Ön sensor zolağı
-    ctx.fillStyle = '#2c3e50';
+    ctx.fillStyle = '#1e293b';
     roundRect(-9, -13, 18, 5, 2);
     ctx.fillStyle = '#ff5e3a';
     ctx.beginPath(); ctx.arc(-5, -10.5, 1.5, 0, Math.PI * 2); ctx.fill();
@@ -658,8 +1119,8 @@ function drawLidar(rx, ry) {
 
     // 1. Skan zonası — yalnız LiDAR-ın artıq gördüyü xanalar. Server skanı robot addım atmazdan
     //    əvvəl edir, ona görə yeni xananın ətrafındakı ön kənar hələ "?" ola bilər: onu boyamırıq.
-    ctx.fillStyle = 'rgba(0, 200, 255, 0.10)';
-    ctx.strokeStyle = 'rgba(0, 200, 255, 0.35)';
+    ctx.fillStyle = 'rgba(' + P.lidar + ', 0.10)';
+    ctx.strokeStyle = 'rgba(' + P.lidar + ', 0.40)';
     for (let dr = -range; dr <= range; dr++) {
         for (let dc = -range; dc <= range; dc++) {
             const r = rr + dr, c = rc + dc;
@@ -681,14 +1142,14 @@ function drawLidar(rx, ry) {
     const TAIL = 0.9, STEPS = 12;           // şüanın arxasında sönən "quyruq" (radian)
     for (let i = 0; i < STEPS; i++) {
         const a0 = angle - TAIL * (i + 1) / STEPS, a1 = angle - TAIL * i / STEPS;
-        ctx.fillStyle = 'rgba(0, 220, 255, ' + (0.28 * (1 - i / STEPS)).toFixed(3) + ')';
+        ctx.fillStyle = 'rgba(' + P.lidar + ', ' + (0.28 * (1 - i / STEPS)).toFixed(3) + ')';
         ctx.beginPath();
         ctx.moveTo(rx, ry);
         ctx.arc(rx, ry, reach * 1.5, a0, a1);
         ctx.closePath();
         ctx.fill();
     }
-    ctx.strokeStyle = 'rgba(0, 240, 255, 0.9)';
+    ctx.strokeStyle = 'rgba(' + P.lidar + ', 0.9)';
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(rx, ry);
@@ -704,7 +1165,7 @@ function drawLidar(rx, ry) {
         const moving = obj.type === 'MOVING_ROBOT' && mover.x !== null;
         const ox = MARGIN + (moving ? mover.x : obj.col) * CELL + CELL / 2;
         const oy = MARGIN + (moving ? mover.y : obj.row) * CELL + CELL / 2;
-        ctx.strokeStyle = 'rgba(231, 76, 60, 0.55)';
+        ctx.strokeStyle = 'rgba(244, 63, 94, 0.55)';
         ctx.lineWidth = 1;
         ctx.setLineDash([4, 3]);
         ctx.beginPath();
@@ -712,9 +1173,9 @@ function drawLidar(rx, ry) {
         ctx.lineTo(ox, oy);
         ctx.stroke();
         ctx.setLineDash([]);
-        // Ağ halqa: qırmızı forkliftin üstündə də əks nöqtəsi seçilsin
-        ctx.fillStyle = '#e74c3c';
-        ctx.strokeStyle = 'white';
+        // Halqa: qırmızı forkliftin üstündə də əks nöqtəsi seçilsin
+        ctx.fillStyle = P.reflection;
+        ctx.strokeStyle = P.reflectionRing;
         ctx.lineWidth = 1.5;
         ctx.beginPath();
         ctx.arc(ox, oy, 3.5, 0, Math.PI * 2);
@@ -724,15 +1185,15 @@ function drawLidar(rx, ry) {
     ctx.lineWidth = 1;
 }
 
-function drawLabel(cx, cy, text, size) {
-    ctx.fillStyle = 'white';
-    ctx.font = 'bold ' + size + 'px sans-serif';
+function drawLabel(cx, cy, text, size, color) {
+    ctx.fillStyle = color || 'white';
+    ctx.font = '700 ' + size + 'px ' + FONT;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(text, cx, cy);
 }
 
-function roundRect(x, y, w, h, r) {
+function roundRectPath(x, y, w, h, r) {
     ctx.beginPath();
     ctx.moveTo(x + r, y);
     ctx.lineTo(x + w - r, y);
@@ -744,6 +1205,11 @@ function roundRect(x, y, w, h, r) {
     ctx.lineTo(x, y + r);
     ctx.quadraticCurveTo(x, y, x + r, y);
     ctx.closePath();
+}
+
+/** Yumru künclü düzbucaqlı çəkib doldurur; yol (path) açıq qalır ki, lazım olsa üstündən stroke() edilsin. */
+function roundRect(x, y, w, h, r) {
+    roundRectPath(x, y, w, h, r);
     ctx.fill();
 }
 
