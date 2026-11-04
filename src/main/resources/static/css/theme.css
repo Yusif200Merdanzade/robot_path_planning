@@ -1,0 +1,260 @@
+/*
+ * Ortaq dizayn sistemi (login.html və index.html): rənglər, aralıqlar, düymələr, kartlar.
+ * Tema <html data-theme="dark|light"> ilə seçilir (bax: js/theme.js). Rəng dəyişmək üçün yalnız
+ * aşağıdakı tokenlərə baxmaq kifayətdir.
+ */
+:root {
+    --font: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+    --mono: "JetBrains Mono", "Cascadia Code", Consolas, ui-monospace, monospace;
+    --radius: 16px;
+    --radius-sm: 10px;
+
+    /* Açıq tema */
+    --bg: #f3f5fa;
+    --bg-glow-1: rgba(56, 132, 255, 0.10);
+    --bg-glow-2: rgba(124, 92, 255, 0.08);
+    --grid-dot: rgba(15, 23, 42, 0.06);
+    --surface: #ffffff;
+    --surface-2: #f5f7fb;
+    --surface-3: #eef1f7;
+    --border: rgba(15, 23, 42, 0.08);
+    --border-strong: rgba(15, 23, 42, 0.14);
+    --text: #0f172a;
+    --text-2: #334155;
+    --muted: #64748b;
+    --accent: #2563eb;
+    --accent-2: #7c3aed;
+    --accent-soft: rgba(37, 99, 235, 0.10);
+    --on-accent: #ffffff;
+    --success: #16a34a;
+    --success-soft: rgba(22, 163, 74, 0.12);
+    --danger: #e11d48;
+    --danger-soft: rgba(225, 29, 72, 0.10);
+    --warning: #d97706;
+    --shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px -12px rgba(15, 23, 42, 0.12);
+    --shadow-lg: 0 24px 60px -24px rgba(15, 23, 42, 0.25);
+    --focus: 0 0 0 3px rgba(37, 99, 235, 0.25);
+    color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+    --bg: #070b16;
+    --bg-glow-1: rgba(56, 189, 248, 0.10);
+    --bg-glow-2: rgba(129, 140, 248, 0.10);
+    --grid-dot: rgba(148, 163, 184, 0.07);
+    --surface: #0e1424;
+    --surface-2: #131b2e;
+    --surface-3: #1a2338;
+    --border: rgba(148, 163, 184, 0.12);
+    --border-strong: rgba(148, 163, 184, 0.22);
+    --text: #e6ecf7;
+    --text-2: #c3cddf;
+    --muted: #8492ab;
+    --accent: #38bdf8;
+    --accent-2: #818cf8;
+    --accent-soft: rgba(56, 189, 248, 0.12);
+    --on-accent: #04111f;
+    --success: #22c55e;
+    --success-soft: rgba(34, 197, 94, 0.14);
+    --danger: #fb7185;
+    --danger-soft: rgba(251, 113, 133, 0.13);
+    --warning: #fbbf24;
+    --shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 12px 32px -16px rgba(0, 0, 0, 0.6);
+    --shadow-lg: 0 30px 80px -30px rgba(0, 0, 0, 0.8);
+    --focus: 0 0 0 3px rgba(56, 189, 248, 0.30);
+    color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body { margin: 0; }
+
+body {
+    min-height: 100vh;
+    font-family: var(--font);
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text);
+    background-color: var(--bg);
+    background-image:
+            radial-gradient(900px 500px at 10% -10%, var(--bg-glow-1), transparent 60%),
+            radial-gradient(800px 500px at 100% 0%, var(--bg-glow-2), transparent 60%),
+            radial-gradient(var(--grid-dot) 1px, transparent 1px);
+    background-size: auto, auto, 22px 22px;
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+    transition: background-color .25s ease, color .25s ease;
+}
+
+/* ---------- Kart ---------- */
+.card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+}
+
+/* ---------- Düymələr ---------- */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    height: 40px;
+    padding: 0 18px;
+    font: 600 14px/1 var(--font);
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background-color .15s ease, border-color .15s ease, transform .1s ease, box-shadow .15s ease, opacity .15s;
+    white-space: nowrap;
+}
+.btn:focus-visible { outline: none; box-shadow: var(--focus); }
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:disabled { cursor: not-allowed; opacity: .5; }
+
+.btn-primary {
+    color: var(--on-accent);
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    box-shadow: 0 8px 20px -10px var(--accent);
+}
+.btn-primary:hover:not(:disabled) { filter: brightness(1.08); }
+
+.btn-ghost {
+    color: var(--text-2);
+    background: var(--surface-2);
+    border-color: var(--border);
+}
+.btn-ghost:hover:not(:disabled) { background: var(--surface-3); border-color: var(--border-strong); color: var(--text); }
+
+.icon-btn { width: 40px; padding: 0; }
+.icon-btn svg { width: 18px; height: 18px; }
+
+/* Tema düyməsi: tünd temada günəş, açıqda ay göstərilir */
+.theme-toggle .icon-sun { display: none; }
+:root[data-theme="dark"] .theme-toggle .icon-sun { display: block; }
+:root[data-theme="dark"] .theme-toggle .icon-moon { display: none; }
+
+/* ---------- Kiçik etiket (chip) ---------- */
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 24px;
+    padding: 0 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    white-space: nowrap;
+}
+
+/* ---------- Forma ---------- */
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+.field label { font-size: 13px; font-weight: 600; color: var(--text-2); }
+.input {
+    width: 100%;
+    height: 44px;
+    padding: 0 14px;
+    font: 15px var(--font);
+    color: var(--text);
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
+}
+.input::placeholder { color: var(--muted); }
+.input:hover { border-color: var(--muted); }
+.input:focus { outline: none; border-color: var(--accent); box-shadow: var(--focus); background: var(--surface); }
+
+/* ---------- Toast bildirişləri (bax: js/toast.js) ---------- */
+/* Aşağı sağ künc: yuxarı paneldəki düymələri örtməsin */
+.toast-stack {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: min(360px, calc(100vw - 32px));
+    pointer-events: none;
+}
+.toast {
+    --tone: var(--accent);
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 14px 16px;
+    overflow: hidden;
+    color: var(--text);
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
+    box-shadow: var(--shadow-lg);
+    pointer-events: auto;
+    animation: toast-in .32s cubic-bezier(.2, .9, .3, 1.2);
+}
+.toast-success { --tone: var(--success); }
+.toast-error { --tone: var(--danger); }
+.toast-icon {
+    flex: none;
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    border-radius: 9px;
+    color: var(--tone);
+    background: color-mix(in srgb, var(--tone) 15%, transparent);
+}
+.toast-icon svg { width: 16px; height: 16px; }
+.toast-body { flex: 1; min-width: 0; padding-top: 1px; }
+.toast-title { font-size: 14px; font-weight: 650; line-height: 1.35; }
+.toast-msg { margin-top: 2px; font-size: 13px; color: var(--muted); line-height: 1.45; }
+.toast-close {
+    flex: none;
+    width: 24px;
+    height: 24px;
+    margin: -2px -2px 0 0;
+    border: 0;
+    border-radius: 6px;
+    font-size: 18px;
+    line-height: 1;
+    color: var(--muted);
+    background: transparent;
+    cursor: pointer;
+}
+.toast-close:hover { color: var(--text); background: var(--surface-3); }
+/* Alt kənarda qalan vaxtı göstərən zolaq */
+.toast-progress {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 3px;
+    width: 100%;
+    background: var(--tone);
+    opacity: .7;
+    transform-origin: left;
+    animation: toast-progress var(--toast-duration, 2000ms) linear forwards;
+}
+.toast-leave { animation: toast-out .25s ease forwards; }
+@keyframes toast-in { from { opacity: 0; transform: translateX(24px) scale(.98); } }
+@keyframes toast-out { to { opacity: 0; transform: translateX(24px); } }
+@keyframes toast-progress { to { transform: scaleX(0); } }
+/* Telefonda yuxarıda: aşağıda formanın düyməsini örtürdü */
+@media (max-width: 520px) {
+    .toast-stack { top: 16px; bottom: auto; right: 16px; }
+    .toast { animation-name: toast-in-top; }
+    .toast-leave { animation-name: toast-out-top; }
+}
+@keyframes toast-in-top { from { opacity: 0; transform: translateY(-16px) scale(.98); } }
+@keyframes toast-out-top { to { opacity: 0; transform: translateY(-16px); } }
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition: none !important; animation: none !important; }
+}
