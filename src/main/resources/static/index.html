@@ -138,6 +138,65 @@
         .stage-empty[hidden] { display: none; }
         .stage-empty svg { width: 44px; height: 44px; color: var(--accent); opacity: .8; }
 
+        /* ---------- 2D / 3D görünüş ---------- */
+        /* 3D sahə 2D xəritə ilə eyni ölçüdədir: keçid zamanı səhifə "tullanmır" */
+        #view3d {
+            width: 100%;
+            aspect-ratio: 720 / 610;
+            max-height: calc(100vh - 220px);
+            min-height: 260px;
+            background: var(--canvas-bg);
+        }
+        #view3d[hidden], #grid[hidden] { display: none; }
+        #view3d canvas { width: 100%; height: 100%; max-height: none; min-height: 0; cursor: grab; touch-action: none; }
+        #view3d canvas:active { cursor: grabbing; }
+        .view-tools {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 2;
+            display: flex;
+            gap: 8px;
+        }
+        .seg {
+            display: inline-flex;
+            padding: 3px;
+            gap: 2px;
+            border-radius: 10px;
+            background: color-mix(in srgb, var(--surface) 82%, transparent);
+            border: 1px solid var(--border);
+            backdrop-filter: blur(8px);
+            box-shadow: var(--shadow);
+        }
+        .seg button {
+            border: 0;
+            background: transparent;
+            color: var(--text-2);
+            font: 600 12.5px var(--font);
+            padding: 6px 12px;
+            border-radius: 7px;
+            cursor: pointer;
+        }
+        .seg button:hover { color: var(--text); }
+        .seg button:focus-visible { outline: none; box-shadow: var(--focus); }
+        .seg button[aria-pressed="true"] { color: var(--on-accent); background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
+        .seg[hidden] { display: none; }
+        .view-hint {
+            position: absolute;
+            left: 10px;
+            bottom: 10px;
+            z-index: 2;
+            padding: 6px 10px;
+            border-radius: 8px;
+            font-size: 12px;
+            color: var(--text-2);
+            background: color-mix(in srgb, var(--surface) 82%, transparent);
+            border: 1px solid var(--border);
+            backdrop-filter: blur(8px);
+            pointer-events: none;
+        }
+        .view-hint[hidden] { display: none; }
+
         /* ---------- Yan panel ---------- */
         .side { display: flex; flex-direction: column; gap: 16px; }
         .panel { padding: 18px; }
@@ -232,7 +291,7 @@
         @media (max-width: 1100px) {
             .layout { grid-template-columns: 1fr; }
             .side { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-            canvas { max-height: none; }
+            canvas, #view3d { max-height: none; }
         }
         @media (max-width: 720px) {
             .app { padding: 16px; gap: 16px; }
@@ -255,7 +314,7 @@
                 <p>Avtonom naviqasiya simulyasiyası</p>
             </div>
         </div>
-        <span class="chip" title="Versiya">v34</span>
+        <span class="chip" title="Versiya">v35</span>
         <div id="connection" class="chip" data-state="pending"><span class="dot"></span><span id="connText">Qoşulur...</span></div>
         <button type="button" class="btn btn-ghost icon-btn theme-toggle" onclick="toggleTheme()" title="Temanı dəyiş" aria-label="Temanı dəyiş">
             <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
@@ -277,6 +336,17 @@
             </ol>
             <div class="canvas-wrap">
                 <canvas id="grid" width="720" height="610"></canvas>
+                <div id="view3d" hidden></div>
+                <div class="view-tools">
+                    <div class="seg" id="followSeg" hidden>
+                        <button type="button" id="followBtn" aria-pressed="false" onclick="toggleFollow()" title="Kamera robotun arxasınca getsin">Robotu izlə</button>
+                    </div>
+                    <div class="seg" role="group" aria-label="Görünüş">
+                        <button type="button" data-view="2d" aria-pressed="true" onclick="setView('2d')" title="Yuxarıdan görünüş">2D</button>
+                        <button type="button" data-view="3d" aria-pressed="false" onclick="setView('3d')" title="Üçölçülü görünüş">3D</button>
+                    </div>
+                </div>
+                <div class="view-hint" id="viewHint" hidden>Fırlatmaq üçün sürüşdürün · yaxınlaşdırmaq üçün siçanın təkərini çevirin</div>
                 <div class="stage-empty" id="stageEmpty">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-6 9 6v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/><path d="M8 21v-8h8v8"/></svg>
                     <div>Anbar xəritəsi simulyasiya başlayanda görünəcək</div>
@@ -741,9 +811,58 @@ function frame(now) {
     if (state && anim.x !== null) {
         updateAnim(anim, now);
         if (mover.x !== null) updateAnim(mover, now);
-        draw();
+        if (view === '3d' && view3d) view3d.render(state, anim, mover, currentTheme(), now);
+        else draw();
     }
 }
+
+// ==================== 2D / 3D görünüş (yalnız vizual) ====================
+// 3D görünüş eyni vəziyyəti (state) və eyni animasiyanı (anim, mover) çəkir, simulyasiyaya təsiri yoxdur.
+// 3D kitabxanası yalnız ilk dəfə "3D" basılanda yüklənir: 2D istifadəçi onu heç yükləmir.
+const VIEW_KEY = 'view';
+const view3dEl = document.getElementById('view3d');
+const viewHint = document.getElementById('viewHint');
+const followSeg = document.getElementById('followSeg');
+const followBtn = document.getElementById('followBtn');
+let view = '2d';
+let view3d = null;
+let view3dLoading = null;
+
+async function setView(mode) {
+    if (mode === '3d' && !view3d) {
+        try {
+            view3dLoading = view3dLoading || import('./js/view3d.js');
+            const module = await view3dLoading;
+            view3dEl.hidden = false;   // ölçü düzgün hesablansın deyə yaradılmadan əvvəl görünür olmalıdır
+            view3d = module.createView3D(view3dEl);
+        } catch (e) {
+            console.error(e);
+            view3dLoading = null;
+            view3dEl.hidden = true;
+            toast({ type: 'error', title: '3D görünüş açılmadı', message: 'Bu brauzer üçölçülü görünüşü dəstəkləmir.', duration: 2000 });
+            return;
+        }
+    }
+    view = mode;
+    const is3d = mode === '3d';
+    canvas.hidden = is3d;
+    view3dEl.hidden = !is3d;
+    followSeg.hidden = !is3d;
+    viewHint.hidden = !is3d;
+    document.querySelectorAll('[data-view]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === mode)));
+    try { localStorage.setItem(VIEW_KEY, mode); } catch (e) { /* gizli rejim: seçim sadəcə yadda qalmır */ }
+    if (is3d) setTimeout(() => { viewHint.hidden = true; }, 6000);
+}
+
+function toggleFollow() {
+    const on = followBtn.getAttribute('aria-pressed') !== 'true';
+    followBtn.setAttribute('aria-pressed', String(on));
+    if (view3d) view3d.setFollow(on);
+}
+
+try {
+    if (localStorage.getItem(VIEW_KEY) === '3d') setView('3d');
+} catch (e) { /* yaddaş əlçatan deyil: 2D ilə başlanır */ }
 
 // ==================== Çəkiliş (yalnız görünüş) ====================
 // Xəritənin rəngləri temaya görə (bax: js/theme.js). rgb üçlükləri şəffaflıqla işlədilir: 'rgba(' + P.path + ',0.8)'.
